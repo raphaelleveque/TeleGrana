@@ -1,6 +1,7 @@
 import os
 import gspread
 from datetime import datetime
+from gspread_formatting import *
 
 class GoogleSheetsService:
     def __init__(self):
@@ -22,21 +23,62 @@ class GoogleSheetsService:
         """Retorna True se conseguir ler o título da planilha."""
         return bool(self.sh.title)
 
-    def setup_headers(self):
-        """Cria os cabeçalhos se a primeira linha estiver vazia."""
-        headers = ["Data", "Usuário", "Valor", "Reembolsado", "Descricao", "Tags"]
+    def setup_headers(self):    
+        """Cria os cabeçalhos: Data, Valor, Reembolsado, Descrição, Tags e Método de Pagamento."""
+        headers = [
+            "Data", 
+            "Valor", 
+            "Reembolsado", 
+            "Descrição", 
+            "Tags", 
+            "Método de Pagamento"
+        ]
+        
         first_row = self.ws.row_values(1)
         
         if not first_row:
             self.ws.insert_row(headers, 1)
-            # Formata em negrito usando notação A1
             self.ws.format("A1:F1", {"textFormat": {"bold": True}})
-            return "Headers criados."
-        return "Headers já existentes."
+            self.apply_validations()
+            return "Headers criados com as novas categorias."
 
-    def add_expense(self, user, valor, descricao, reembolsado=False, tags=""):
-        """Adiciona uma nova linha de gasto."""
+        return "Headers já existentes."
+    
+    def apply_validations(self):
+        """Define as listas suspensas para as colunas Tags (F) e Método (G)."""
+        
+        tag_options = ["Mercado", "Viagem", "Restaurante", "Academia", "Compras", "Outros"]
+        metodo_options = ["Pix", "Crédito", "Débito", "Caju"]
+
+        set_data_validation_for_cell_range(
+            self.ws, 
+            "E2:E1000", 
+            DataValidationRule(
+                BooleanCondition('ONE_OF_LIST', tag_options),
+                showCustomUi=True
+            )
+        )
+
+        set_data_validation_for_cell_range(
+            self.ws, 
+            "F2:F1000", 
+            DataValidationRule(
+                BooleanCondition('ONE_OF_LIST', metodo_options),
+                showCustomUi=True
+            )
+        )
+
+    def add_expense(self, valor, descricao, reembolsado=False, tags="", metodo_pagamento=""):
+        """Adiciona uma nova linha de gasto.
+        
+        Args:
+            valor: Valor numérico do gasto
+            descricao: Descrição do gasto
+            reembolsado: Se foi reembolsado (padrão: False)
+            tags: Tag da categoria (padrão: "")
+            metodo_pagamento: Método de pagamento (padrão: "")
+        """
         data = datetime.now().strftime('%d/%m/%Y %H:%M')
-        # Google Sheets entende True/False como checkbox se configurado
-        nova_linha = [data, user, valor, reembolsado, descricao, tags]
+        # Ordem: Data, Valor, Reembolsado, Descrição, Tags, Método de Pagamento
+        nova_linha = [data, valor, reembolsado, descricao, tags, metodo_pagamento]
         self.ws.append_row(nova_linha)

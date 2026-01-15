@@ -10,9 +10,6 @@ from services.google_sheets import GoogleSheetsService
 
 async def main():    
     # Inicializa serviços
-    sheets = GoogleSheetsService()
-    print(f"--- {sheets.setup_headers()} ---")
-    
     bot = Bot(token=os.getenv('TELEGRAM_TOKEN'))
     dp = Dispatcher()
     dp.include_router(router)
