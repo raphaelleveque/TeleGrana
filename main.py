@@ -9,6 +9,8 @@ from bot.handlers import router
 from services.google_sheets import GoogleSheetsService 
 
 async def main():    
+    sheets = GoogleSheetsService()
+    print(f"--- {sheets.setup_headers()} ---") 
     # Inicializa serviços
     bot = Bot(token=os.getenv('TELEGRAM_TOKEN'))
     dp = Dispatcher()
