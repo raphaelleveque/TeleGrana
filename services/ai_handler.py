@@ -1,5 +1,6 @@
 import os
 import json
+from datetime import datetime
 import google.generativeai as genai
 from dotenv import load_dotenv
 
@@ -27,21 +28,21 @@ class AIService:
         REGRAS DE CLASSIFICAÇÃO:
         - tags para GASTOS: {expense_tags}
         - tags para ENTRADAS: {income_tags}
-        - metodo_pagamento: Apenas para GASTOS, escolha APENAS uma: [Pix, Crédito, Débito, Caju]. Para ENTRADAS, deixe vazio.
+        - metodo_pagamento: Escolha APENAS uma: [Pix, Crédito, Débito, Caju]. Se não mencionado, retorne null.
         
         IMPORTANTE:
         - Se for GASTO: o valor deve ser NEGATIVO (ex: -400)
         - Se for ENTRADA: o valor deve ser POSITIVO (ex: 10000)
-        - Se a tag não se encaixar perfeitamente, use 'Outros'.
-        - Se mencionar método de pagamento, extraia corretamente (ex: "paguei no pix" = "Pix")
-        - A descricao deve ser uma versão resumida e clara
+        - Se a tag não se encaixar perfeitamente ou não for mencionada, retorne null (não use 'Outros' por padrão).
+        - Se o método de pagamento não for mencionado, retorne null.
+        - A descricao deve ser uma versão resumida e clara. Se não houver descrição clara, use null.
         
         Retorne APENAS um JSON:
         {{
             "valor": float (negativo para gastos, positivo para entradas),
-            "descricao": str,
-            "tags": str,
-            "metodo_pagamento": str (vazio para entradas)
+            "descricao": str (ou null),
+            "tags": str (ou null),
+            "metodo_pagamento": str (ou null)
         }}
         Se não houver valor, retorne null.
         """
@@ -64,12 +65,14 @@ class AIService:
 
     async def parse_reimbursement(self, text: str):
         """Detecta se a mensagem é sobre reembolso e extrai informações."""
+        current_date = datetime.now().strftime('%d/%m/%Y')
         prompt = f"""
-        Você é um assistente financeiro pessoal. Analise se a seguinte frase é sobre um REEMBOLSO: "{text}"
+        Você é um assistente financeiro pessoal. Estamos em {current_date}.
+        Analise se a seguinte frase é sobre um REEMBOLSO: "{text}"
         
         Se for sobre reembolso, extraia:
         - valor_reembolsado: valor que foi reembolsado (float)
-        - data_compra: data da compra original (formato dd/mm/yyyy)
+        - data_compra: data da compra original (formato dd/mm/yyyy). Se o usuário disser "dia 15" e não especificar mês/ano, assuma mês/ano atual ({current_date}).
         - descricao_compra: descrição da compra que foi reembolsada (ex: "mercado", "compra no mercado")
         
         Retorne APENAS um JSON:
@@ -81,8 +84,8 @@ class AIService:
         }}
         
         EXEMPLO de reembolso:
-        "Minha mae me deu 500 reais para reembolsar o mercado que eu fiz no dia 15/01"
-        -> {{"is_reimbursement": true, "valor_reembolsado": 500.0, "data_compra": "15/01/2026", "descricao_compra": "mercado"}}
+        "Minha mae me deu 500 reais para reembolsar o mercado que eu fiz no dia 15"
+        -> {{"is_reimbursement": true, "valor_reembolsado": 500.0, "data_compra": "15/XX/XXXX", "descricao_compra": "mercado"}} (use o ano e mês corretos)
         """
         
         try:

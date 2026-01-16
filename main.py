@@ -10,7 +10,14 @@ from services.google_sheets import GoogleSheetsService
 
 async def main():    
     sheets = GoogleSheetsService()
-    print(f"--- {sheets.setup_headers()} ---") 
+    
+    # ---------------------------------------------------------
+    # Mude para True se precisar inicializar/verificar headers
+    RUN_SETUP = False 
+    # ---------------------------------------------------------
+    
+    if RUN_SETUP:
+        print(f"--- {sheets.setup_headers()} ---") 
     # Inicializa serviços
     bot = Bot(token=os.getenv('TELEGRAM_TOKEN'))
     dp = Dispatcher()

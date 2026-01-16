@@ -115,65 +115,89 @@ class GoogleSheetsService:
         row_number_str = ''.join(filter(str.isdigit, range_str.split('!')[1].split(':')[0]))
         return int(row_number_str)
     
+        return matches
+    
     def find_expense_by_date_and_desc(self, data_compra, descricao_compra):
-        """Busca uma despesa por data e descrição.
-        
-        Args:
-            data_compra: Data no formato dd/mm/yyyy
-            descricao_compra: Descrição ou palavra-chave da compra
-            
-        Returns:
-            Lista de tuplas (row_index, row_data) com as despesas encontradas
-        """
-        # Busca todas as linhas (pula o cabeçalho)
+        """Busca uma despesa por data (opcional) e descrição (fuzzy)."""
         all_rows = self.ws.get_all_values()
         matches = []
         
-        # Normaliza a data de busca (remove hora se houver)
-        data_busca = data_compra.split()[0] if ' ' in data_compra else data_compra
+        # Stopwords para ignorar na busca
+        stopwords = {"de", "do", "da", "em", "no", "na", "com", "a", "o", "compra", "gasto", "despesa"}
         
-        for idx, row in enumerate(all_rows[1:], start=2):  # Começa na linha 2 (pula header)
-            if len(row) < 6:
-                continue
+        # Prepara termos de busca
+        search_terms = [word.lower() for word in descricao_compra.split() if word.lower() not in stopwords]
+        
+        # Data de busca normalizada (se existir)
+        data_busca_norm = None
+        if data_compra:
+             # Tenta normalizar se não for None
+             parts = data_compra.split('/')
+             if len(parts) >= 2: # Aceita dia/mes ou completa
+                 data_busca_norm = data_compra
+        
+        # Itera de trás pra frente (mais recentes primeiro) para otimizar "nessa compra"
+        # rows[1:] são os dados. Enumeramos com start=2.
+        # Vamos inverter a lista de dados para busca
+        data_rows = list(enumerate(all_rows[1:], start=2))
+        data_rows.reverse() 
+        
+        for idx, row in data_rows:
+            if len(row) < 6: continue
                 
-            data_celula = row[0]  # Coluna A - Data
-            descricao_celula = row[3].lower() if len(row) > 3 else ""  # Coluna D - Descrição
-            reembolsado_celula = row[2] if len(row) > 2 else "0"  # Coluna C - Reembolsado
+            data_celula = row[0]
+            descricao_celula = row[3].lower() if len(row) > 3 else ""
+            reembolsado_celula = row[2] if len(row) > 2 else "0"
             
-            # Verifica se já está totalmente reembolsado (valor reembolsado >= valor da compra)
+            # 1. Verifica Reembolso (se já foi pago, ignora - ou não?)
+            # O user quer reembolsar. Se já foi, ignoramos.
             try:
-                valor_reembolsado = float(str(reembolsado_celula).replace(',', '.')) if reembolsado_celula else 0
+                valor_reembolsado_atual = float(str(reembolsado_celula).replace(',', '.')) if reembolsado_celula else 0
                 valor_compra = self.get_expense_value(row)
-                # Se já foi reembolsado igual ou mais que o valor, pula
-                if valor_reembolsado >= valor_compra:
+                
+                # Ignorar Entradas (Valores positivos)
+                if valor_compra > 0:
+                    continue
+                    
+                if valor_reembolsado_atual >= abs(valor_compra):
                     continue
             except:
-                pass  # Se não conseguir calcular, continua a busca
+                pass
+
+            # 2. Verifica Data (se fornecida)
+            match_data = True
+            if data_busca_norm:
+                # Compara strings simples de data. 
+                # Se data_compra for "15/01", e a celula for "15/01/2026", damos match?
+                # Sim, contains é seguro.
+                data_celula_date_part = data_celula.split()[0]
+                if data_busca_norm not in data_celula_date_part:
+                    match_data = False
             
-            # Verifica data (pode ter hora, então compara só a data)
-            data_celula_sem_hora = data_celula.split()[0] if ' ' in data_celula else data_celula
+            # 3. Verifica Descrição (Fuzzy)
+            # Todos os termos de busca devem estar na descrição? Ou pelo menos um?
+            # Se user disse "compra computador", e a linah é "compra de computador", 
+            # search_terms = ["computador"] (compra removido stop? talvez nao devesse remover compra)
+            # Vamos ser permissivos: Pelo menos 1 termo forte deve bater.
+            match_desc = False
+            if not search_terms: # Se sobrou nada (ex: usuario disse só "compra"), usa o original
+                 search_terms = [w.lower() for w in descricao_compra.split()]
+
+            found_terms = 0
+            for term in search_terms:
+                if term in descricao_celula:
+                    found_terms += 1
             
-            # Normaliza datas para comparação (dd/mm/yyyy)
-            # Remove zeros à esquerda e normaliza formato
-            def normalize_date(date_str):
-                parts = date_str.split('/')
-                if len(parts) == 3:
-                    return f"{int(parts[0]):02d}/{int(parts[1]):02d}/{parts[2]}"
-                return date_str
+            # Critério: se tiver termos, pelo menos 50% ou 1 (se for só 1 termo)
+            if len(search_terms) == 1:
+                match_desc = found_terms == 1
+            else:
+                match_desc = found_terms >= 1 # Pelo menos 1 termo importante encontrado
             
-            try:
-                data_busca_norm = normalize_date(data_busca)
-                data_celula_norm = normalize_date(data_celula_sem_hora)
-                data_match = data_busca_norm == data_celula_norm or data_busca in data_celula_sem_hora or data_celula_sem_hora in data_busca
-            except:
-                # Fallback para comparação simples
-                data_match = data_busca in data_celula_sem_hora or data_celula_sem_hora in data_busca
-            
-            # Verifica se a descrição contém a palavra-chave
-            desc_match = descricao_compra.lower() in descricao_celula or descricao_celula in descricao_compra.lower()
-            
-            if data_match and desc_match:
+            if match_data and match_desc:
                 matches.append((idx, row))
+                # Limite de matches para não trazer a planilha toda
+                if len(matches) >= 5: break
         
         return matches
     
