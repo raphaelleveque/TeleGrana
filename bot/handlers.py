@@ -2,12 +2,13 @@ from aiogram import Router, types
 from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
 from services.ai_handler import AIService
-from services.google_sheets import GoogleSheetsService
+from services.transaction_service import TransactionService
 from bot.states import ExpenseState
+from models.transaction import Transaction
 import os
 
 router = Router()
-sheets = GoogleSheetsService()
+service = TransactionService() # Renamed from 'sheets' to 'service'
 ai_service = AIService()
 MY_ID = int(os.getenv('MY_USER_ID'))
 
@@ -31,7 +32,7 @@ async def handle_edit(message: types.Message, state: FSMContext):
     if message.from_user.id != MY_ID: return
     
     text = message.text.strip()
-    ai_result = await ai_service.parse_edit_intent(text, sheets.tag_options, sheets.metodo_options)
+    ai_result = await ai_service.parse_edit_intent(text, service.tag_options, service.metodo_options)
 
     # Verifica se a IA identificou uma tentativa de edição
     if ai_result and ai_result.get("is_edit_request"):
@@ -117,39 +118,30 @@ async def handle_reimbursement_choice(message: types.Message, state: FSMContext)
     await process_reimbursement(message, matches, choice_idx, valor_reembolsado, sheets)
     await state.clear()
 
-async def process_reimbursement(message, matches, choice_idx, valor_reembolsado, sheets_service):
-    selected = matches[choice_idx]
-    row_index = selected["row_index"]
-    row_data = selected["row_data"]
+async def process_reimbursement(message, matches_data, choice_idx, valor_reembolsado, service):
+    # matches_data é lista de dicts com 'row_index' e 'row_data' (serializado)
+    selected_data = matches_data[choice_idx]
     
-    valor_compra = sheets_service.get_expense_value(row_data)
-    valor_compra_abs = abs(valor_compra)
-    diferenca = valor_reembolsado - valor_compra_abs
+    # Reconstrói objeto Transaction
+    transaction = Transaction.from_row(selected_data["row_data"], row_index=selected_data["row_index"])
     
+    # Delega lógica para o serviço
+    result = service.process_reimbursement(
+        transaction=transaction, 
+        valor_reembolsado=valor_reembolsado
+    )
+    
+    # Formata resposta com base no resultado
     resposta = ""
-    
-    if diferenca > 0:
-        # Reembolso maior que a despesa: Capa o reembolso e cria entrada
-        sheets_service.update_reimbursement(row_index, valor_compra_abs)
-        
-        # Cria nova entrada para o excedente
-        descricao_excedente = f"Reembolso Excedente: {row_data[3]}"
-        # Verifica se tag Reembolso existe, senão cria
-        if "Reembolso" not in sheets_service.tag_options:
-            sheets_service.add_category("Reembolso")
-            
-        sheets_service.add_expense(diferenca, descricao_excedente, 0, "Reembolso", "Pix") # Assume Pix/Transferência para o troco?
-        
+    if result["is_surplus"]:
         resposta = (
             f"✅ Reembolso processado com excedente!\n"
-            f"💰 A compra de R$ {valor_compra_abs:.2f} foi **totalmente quitada**.\n"
-            f"📈 O troco de R$ {diferenca:.2f} foi salvo como uma nova **Entrada** (Tag: Reembolso)."
+            f"💰 A compra de R$ {result['valor_compra_abs']:.2f} foi **totalmente quitada**.\n"
+            f"📈 O troco de R$ {result['surplus_amount']:.2f} foi salvo como uma nova **Entrada** (Tag: Reembolso)."
         )
     else:
-        # Reembolso normal ou parcial
-        sheets_service.update_reimbursement(row_index, valor_reembolsado)
-        resposta = f"✅ Reembolso processado!\n💰 Compra de R$ {valor_compra_abs:.2f} - Reembolsado: R$ {valor_reembolsado:.2f}\n"
-        
+        diferenca = result["diferenca"]
+        resposta = f"✅ Reembolso processado!\n💰 Compra de R$ {result['valor_compra_abs']:.2f} - Reembolsado: R$ {result['valor_reembolsado']:.2f}\n"
         if diferenca < 0: 
             resposta += f"📉 Faltam R$ {abs(diferenca):.2f}"
         else: 
@@ -188,10 +180,12 @@ async def handle_message(message: types.Message, state: FSMContext):
             # Matches multiplos - pede para o usuário escolher
             response_msg = "⚠️ Encontrei mais de uma transação. Qual delas?\n\n"
             match_options = []
-            for idx, (row_idx, row) in enumerate(matches, 1):
-                # row[0] is date, row[1] is val, row[3] is desc
-                response_msg += f"{idx}. {row[0]} - {row[3]} ({row[1]})\n"
-                match_options.append({"row_index": row_idx, "row_data": row})
+            
+            # matches é lista de Transaction objects
+            for idx, transaction in enumerate(matches, 1):
+                response_msg += f"{idx}. {transaction.date} - {transaction.description} ({transaction.amount})\n"
+                # Serializa para o estado
+                match_options.append({"row_index": transaction.row_index, "row_data": transaction.to_row()})
             
             response_msg += "\nResponda com o número da opção (ex: 1)"
             
@@ -201,10 +195,10 @@ async def handle_message(message: types.Message, state: FSMContext):
             return
 
         # Único match - processa direto
-        row_index, row_data = matches[0]
-        match_idx = 0
-        matches_data = [{"row_index": row_index, "row_data": row_data}]
-        await process_reimbursement(message, matches_data, 0, valor_reembolsado, sheets)
+        transaction = matches[0]
+        # Serializa para manter consistência com a função process_reimbursement genérica
+        matches_data = [{"row_index": transaction.row_index, "row_data": transaction.to_row()}]
+        await process_reimbursement(message, matches_data, 0, valor_reembolsado, service)
         return
 
     # Passou direto se não for reembolso... (segue fluxo)
@@ -215,14 +209,14 @@ async def handle_message(message: types.Message, state: FSMContext):
         action = tag_result.get("action")
         
         if action == "list":
-            tags_str = ", ".join([f"`{t}`" for t in sheets.tag_options])
+            tags_str = ", ".join([f"`{t}`" for t in service.tag_options])
             await message.answer(f"📋 **Suas Tags:**\n{tags_str}")
             return
             
         if action == "create":
             new_tag = tag_result.get("tag_name")
             if new_tag:
-                if sheets.add_category(new_tag):
+                if service.add_category(new_tag):
                      await message.answer(f"✅ Tag **{new_tag}** criada com sucesso!")
                 else:
                      await message.answer(f"⚠️ A tag **{new_tag}** já existe.")
@@ -231,13 +225,13 @@ async def handle_message(message: types.Message, state: FSMContext):
             return
 
     # 3. Tenta processar como edição de transação passada
-    edit_result = await ai_service.parse_past_edit(text, sheets.tag_options, sheets.metodo_options)
+    edit_result = await ai_service.parse_past_edit(text, service.tag_options, service.metodo_options)
 
     if edit_result and edit_result.get("is_past_edit"):
         criteria = edit_result.get("search_criteria", {})
         updates = edit_result.get("updates", {})
         
-        matches = sheets.find_transaction(
+        matches = service.find_transaction(
             date_query=criteria.get("date"),
             amount_query=criteria.get("amount"),
             desc_query=criteria.get("description")
@@ -252,41 +246,40 @@ async def handle_message(message: types.Message, state: FSMContext):
             return
         
         # Encontrou uma única transação
-        row_index, row_data = matches[0]
+        transaction = matches[0]
+        row_index = transaction.row_index
         response_parts = ["✅ Transação atualizada!"]
         
         if updates.get("tag"):
             new_tag = str(updates["tag"]).capitalize()
-            sheets.add_category(new_tag) # Cria se não existir
-            sheets.update_expense_category(row_index, new_tag)
+            # Validação/Criação já tratada no service.add_category se fosse o caso, mas aqui usamos sheets direto via proxy
+            service.add_category(new_tag) # Garante que existe na lista validada
+            service.update_expense_category(row_index, new_tag)
             response_parts.append(f"🏷️ Tag: {new_tag}")
             
         if updates.get("payment_method"):
             new_method = str(updates["payment_method"]).capitalize()
-            # Validação simples
-            if new_method not in sheets.metodo_options and "Caju" not in new_method: # Caju as sometimes it's distinct
-                 pass 
             sheets.update_payment_method(row_index, new_method)
             response_parts.append(f"💳 Método: {new_method}")
             
         if updates.get("amount") is not None:
              # Mantém o sinal original da transação
-            old_val = sheets.get_expense_value(row_data)
+            old_val = transaction.amount
             new_val_abs = abs(float(updates["amount"]))
             new_val_signed = -new_val_abs if old_val < 0 else new_val_abs
-            sheets.update_expense_value(row_index, new_val_signed)
+            service.update_expense_value(row_index, new_val_signed)
             response_parts.append(f"💰 Valor: R$ {new_val_abs:.2f}")
 
         if updates.get("description"):
             new_desc = str(updates["description"])
-            sheets.update_description(row_index, new_desc)
+            service.update_description(row_index, new_desc)
             response_parts.append(f"📝 Descrição: {new_desc}")
             
         await message.answer("\n".join(response_parts))
         return
 
     # 3. Tenta processar como despesa/entrada normal
-    ai_result = await ai_service.parse_expense(text, sheets.expense_tags, sheets.income_tags)
+    ai_result = await ai_service.parse_expense(text, service.expense_tags, service.income_tags)
     
     if ai_result and ai_result.get("valor") is not None:
         valor = float(ai_result["valor"])
@@ -385,27 +378,25 @@ async def check_missing_info(message: types.Message, state: FSMContext):
     await final_save(message, state, data)
 
 async def final_save(message, state, data):
-    valor = data["valor"]
-    descricao = data["descricao"]
-    tags = data["tags"]
-    metodo = data["metodo_pagamento"]
-    tipo_operacao = data["type"]
+    # Delega salvamento ao TransactionService
+    result = service.create_transaction(
+        valor=data["valor"],
+        descricao=data["descricao"],
+        tags=data["tags"],
+        metodo=data["metodo_pagamento"]
+    )
+        
+    valor_abs = result["valor_abs"]
+    emoji = "💸" if result["is_expense"] else "💰"
+    tipo_operacao = data["type"] # Poderia vir do result tbm se quisesse
     
-    # Mapeamento final de metodo se precisar
-    metodo_map = {"pix": "Pix", "crédito": "Crédito", "credito": "Crédito", "débito": "Débito", "debito": "Débito", "caju": "Caju"}
-    metodo_pagamento_clean = metodo_map.get(metodo.lower(), metodo.capitalize())
-        
-    row_index = sheets.add_expense(valor, descricao, reembolsado=0, tags=tags, metodo_pagamento=metodo_pagamento_clean)
-        
-    valor_abs = abs(valor)
-    emoji = "💸" if valor < 0 else "💰"
     resposta = f"{emoji} {tipo_operacao}: R$ {valor_abs:.2f}\n✅ Salvos na planilha!"
-    resposta += f"\n🏷️ Tag: {tags}"
-    resposta += f"\n💳 Método: {metodo_pagamento_clean}"
+    resposta += f"\n🏷️ Tag: {result['tags']}"
+    resposta += f"\n💳 Método: {result['metodo_clean']}"
         
     await message.answer(resposta)
 
     # Entra em modo de edição
     await state.set_state(ExpenseState.AwaitingEdit)
-    await state.set_data({"last_transaction_row": row_index})
+    await state.set_data({"last_transaction_row": result["row_index"]})
     await message.answer("👆 Transação salva. Se precisar alterar algo, é só me dizer.")

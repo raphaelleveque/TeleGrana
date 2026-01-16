@@ -18,8 +18,8 @@ class GoogleSheetsService:
             print(f"❌ Erro ao abrir planilha com ID: {sheet_id}")
             raise e
 
-        self.expense_tags = ["Mercado", "Viagem", "Restaurante", "Academia", "Compras", "Outros"]
-        self.income_tags = ["Salário", "Presente", "Outros"]
+        self.expense_tags = ["Mercado", "Viagem", "Restaurante", "Academia", "Compras", "Gasolina", "Outros"]
+        self.income_tags = ["Salário", "Presente", "Reembolso", "Outros"]
         self.tag_options = list(set(self.expense_tags + self.income_tags))
         self.metodo_options = ["Pix", "Crédito", "Débito", "Caju"]
 
@@ -117,146 +117,14 @@ class GoogleSheetsService:
     
         return matches
     
-    def find_expense_by_date_and_desc(self, data_compra, descricao_compra):
-        """Busca uma despesa por data (opcional) e descrição (fuzzy)."""
-        all_rows = self.ws.get_all_values()
-        matches = []
-        
-        # Stopwords para ignorar na busca
-        stopwords = {"de", "do", "da", "em", "no", "na", "com", "a", "o", "compra", "gasto", "despesa"}
-        
-        # Prepara termos de busca
-        search_terms = [word.lower() for word in descricao_compra.split() if word.lower() not in stopwords]
-        
-        # Data de busca normalizada (se existir)
-        data_busca_norm = None
-        if data_compra:
-             # Tenta normalizar se não for None
-             parts = data_compra.split('/')
-             if len(parts) >= 2: # Aceita dia/mes ou completa
-                 data_busca_norm = data_compra
-        
-        # Itera de trás pra frente (mais recentes primeiro) para otimizar "nessa compra"
-        # rows[1:] são os dados. Enumeramos com start=2.
-        # Vamos inverter a lista de dados para busca
-        data_rows = list(enumerate(all_rows[1:], start=2))
-        data_rows.reverse() 
-        
-        for idx, row in data_rows:
-            if len(row) < 6: continue
-                
-            data_celula = row[0]
-            descricao_celula = row[3].lower() if len(row) > 3 else ""
-            reembolsado_celula = row[2] if len(row) > 2 else "0"
-            
-            # 1. Verifica Reembolso (se já foi pago, ignora - ou não?)
-            # O user quer reembolsar. Se já foi, ignoramos.
-            try:
-                valor_reembolsado_atual = float(str(reembolsado_celula).replace(',', '.')) if reembolsado_celula else 0
-                valor_compra = self.get_expense_value(row)
-                
-                # Ignorar Entradas (Valores positivos)
-                if valor_compra > 0:
-                    continue
-                    
-                if valor_reembolsado_atual >= abs(valor_compra):
-                    continue
-            except:
-                pass
-
-            # 2. Verifica Data (se fornecida)
-            match_data = True
-            if data_busca_norm:
-                # Compara strings simples de data. 
-                # Se data_compra for "15/01", e a celula for "15/01/2026", damos match?
-                # Sim, contains é seguro.
-                data_celula_date_part = data_celula.split()[0]
-                if data_busca_norm not in data_celula_date_part:
-                    match_data = False
-            
-            # 3. Verifica Descrição (Fuzzy)
-            # Todos os termos de busca devem estar na descrição? Ou pelo menos um?
-            # Se user disse "compra computador", e a linah é "compra de computador", 
-            # search_terms = ["computador"] (compra removido stop? talvez nao devesse remover compra)
-            # Vamos ser permissivos: Pelo menos 1 termo forte deve bater.
-            match_desc = False
-            if not search_terms: # Se sobrou nada (ex: usuario disse só "compra"), usa o original
-                 search_terms = [w.lower() for w in descricao_compra.split()]
-
-            found_terms = 0
-            for term in search_terms:
-                if term in descricao_celula:
-                    found_terms += 1
-            
-            # Critério: se tiver termos, pelo menos 50% ou 1 (se for só 1 termo)
-            if len(search_terms) == 1:
-                match_desc = found_terms == 1
-            else:
-                match_desc = found_terms >= 1 # Pelo menos 1 termo importante encontrado
-            
-            if match_data and match_desc:
-                matches.append((idx, row))
-                # Limite de matches para não trazer a planilha toda
-                if len(matches) >= 5: break
-        
-        return matches
+    # Logic moved to TransactionService
+    def get_all_rows(self):
+        """Retorna todas as linhas da planilha."""
+        return self.ws.get_all_values()
     
-    def find_transaction(self, date_query=None, amount_query=None, desc_query=None):
-        """Busca transação flexível para edição.
-        
-        Args:
-            date_query: 'today', 'yesterday' ou data dd/mm/yyyy
-            amount_query: valor float (busca exata ou aproximada)
-            desc_query: string parcial
-            
-        Returns:
-            Lista de tuplas (row_index, row_data)
-        """
-        all_rows = self.ws.get_all_values()
-        matches = []
-        
-        # Resolve a data
-        target_date_str = None
-        if date_query:
-            if date_query == 'today':
-                target_date_str = datetime.now().strftime('%d/%m/%Y')
-            elif date_query == 'yesterday':
-                target_date_str = (datetime.now() - timedelta(days=1)).strftime('%d/%m/%Y')
-            else:
-                target_date_str = date_query
-        
-        for idx, row in enumerate(all_rows[1:], start=2):
-            if len(row) < 6: continue
-            
-            # Dados da linha
-            row_date_str = row[0].split()[0] # remove hora
-            row_desc = row[3]
-            try:
-                row_val = self.get_expense_value(row)
-                row_val_abs = abs(row_val)
-            except:
-                row_val_abs = 0
-
-            # Checks
-            match_date = True
-            if target_date_str:
-                # Normalização simples de string
-                match_date = (target_date_str in row_date_str)
-            
-            match_amount = True
-            if amount_query is not None:
-                # Compara valor absoluto, permitindo pequena margem
-                query_abs = abs(float(amount_query))
-                match_amount = abs(query_abs - row_val_abs) < 0.1
-            
-            match_desc = True
-            if desc_query:
-                match_desc = desc_query.lower() in row_desc.lower()
-
-            if match_date and match_amount and match_desc:
-                matches.append((idx, row))
-                
-        return matches
+    # Logic moved to TransactionService
+    def find_transaction_logic_placeholder(self):
+        pass
 
     def update_reimbursement(self, row_index, valor_reembolsado):
         """Atualiza o valor reembolsado de uma despesa (coluna C).

@@ -6,18 +6,18 @@ load_dotenv()
 
 from aiogram import Bot, Dispatcher
 from bot.handlers import router
-from services.google_sheets import GoogleSheetsService 
+from services.transaction_service import TransactionService 
 
 async def main():    
-    sheets = GoogleSheetsService()
+    service = TransactionService()
     
     # ---------------------------------------------------------
-    # Mude para True se precisar inicializar/verificar headers
-    RUN_SETUP = False 
+    # Inicialização Inteligente: Verifica se a planilha está vazia
+    # Se estiver vazia, cria headers e validações.
+    # Se não, mantém como está.
     # ---------------------------------------------------------
+    print(f"--- {service.initialize_sheet()} ---") 
     
-    if RUN_SETUP:
-        print(f"--- {sheets.setup_headers()} ---") 
     # Inicializa serviços
     bot = Bot(token=os.getenv('TELEGRAM_TOKEN'))
     dp = Dispatcher()
