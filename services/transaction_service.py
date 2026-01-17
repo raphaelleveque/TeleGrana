@@ -1,5 +1,14 @@
 from services.google_sheets import GoogleSheetsService
 from models.transaction import Transaction
+import unicodedata
+
+def normalize_text(text):
+    """Remove acentos e converte para minúsculas."""
+    if not text: return ""
+    return "".join(
+        c for c in unicodedata.normalize('NFD', str(text).lower())
+        if unicodedata.category(c) != 'Mn'
+    )
 
 class TransactionService:
     def __init__(self):
@@ -130,11 +139,12 @@ class TransactionService:
 
             # Checa Descrição
             if desc_query:
-                keywords = desc_query.lower().split()
-                desc_lower = (transaction.description or "").lower()
+                query_norm = normalize_text(desc_query)
+                keywords = query_norm.split()
+                desc_norm = normalize_text(transaction.description or "")
                 all_found = True
                 for kw in keywords:
-                    if kw not in desc_lower:
+                    if kw not in desc_norm:
                         all_found = False
                         break
                 if not all_found:
@@ -192,7 +202,7 @@ class TransactionService:
 
         return result
 
-    def create_transaction(self, valor, descricao, tags, metodo):
+    def create_transaction(self, valor, descricao, tags, metodo, data=None):
         """
         Limpa dados e salva nova transação.
         """
@@ -209,7 +219,7 @@ class TransactionService:
         else:
             metodo_clean = ""
             
-        row_index = self.sheets.add_expense(valor, descricao, 0, tags, metodo_clean)
+        row_index = self.sheets.add_expense(valor, descricao, 0, tags, metodo_clean, data_custom=data)
         
         return {
             "row_index": row_index,

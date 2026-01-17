@@ -21,26 +21,57 @@ class AIService:
             raise ValueError("GEMINI_API_KEY não encontrada no .env")
         
         genai.configure(api_key=api_key)
-        # Usando gemini-3-flash-preview que está disponível na API
-        self.model = genai.GenerativeModel('gemini-flash-latest')
+        
+        # Lista de modelos para fallback em caso de 429
+        # Priorizamos os verificados como ativos no teste
+        self.models_to_try = [
+            'gemini-3-flash-preview',
+            'gemini-2.5-flash-lite',
+            'gemini-2.5-flash',
+            'gemini-2.0-flash',
+            'gemini-2.0-flash-lite',
+            'gemini-flash-latest'
+        ]
+
+    async def _generate_content_with_fallback(self, prompt):
+        """Tenta gerar conteúdo com fallback para outros modelos em caso de 429."""
+        last_error = None
+        for model_name in self.models_to_try:
+            try:
+                model = genai.GenerativeModel(model_name)
+                # Chamada síncrona dentro da thread atual (como estava antes)
+                response = model.generate_content(prompt)
+                return response.text
+            except Exception as e:
+                last_error = e
+                erro_str = str(e).lower()
+                if "429" in erro_str or "quota" in erro_str:
+                    print(f"⚠️ Quota excedida para o modelo {model_name}. Tentando próximo...")
+                    continue
+                else:
+                    # Erros que não são de quota a gente interrompe
+                    print(f"❌ Erro no modelo {model_name}: {e}")
+                    break
+        
+        # Se chegou aqui, todos falharam ou houve um erro crítico
+        if last_error:
+            print(f"🚨 Todos os modelos falharam. Último erro: {last_error}")
+        return None
 
     async def parse_expense(self, text: str, expense_tags: list, income_tags: list):
-        prompt = get_expense_classification_prompt(text, expense_tags, income_tags)
+        current_date = datetime.now().strftime('%d/%m/%Y')
+        prompt = get_expense_classification_prompt(text, expense_tags, income_tags, current_date)
         
         try:
-            response = self.model.generate_content(prompt)
-            response_text = response.text
+            response_text = await self._generate_content_with_fallback(prompt)
+            if not response_text:
+                return None
             
             # Remove blocos de código markdown se o modelo insistir em colocar
             clean_text = response_text.replace("```json", "").replace("```", "").strip()
             return json.loads(clean_text)
         except Exception as e:
-            erro_str = str(e)
-            # Erro de quota excedida
-            if "429" in erro_str or "quota" in erro_str.lower() or "rate limit" in erro_str.lower():
-                print(f"⚠️ Quota da API excedida. Aguarde alguns minutos e tente novamente.")
-            else:
-                print(f"Erro ao processar JSON da IA: {e}")
+            print(f"Erro ao processar JSON da IA: {e}")
             return None
 
     async def parse_reimbursement(self, text: str):
@@ -49,17 +80,14 @@ class AIService:
         prompt = get_reimbursement_prompt(text, current_date)
         
         try:
-            response = self.model.generate_content(prompt)
-            response_text = response.text
+            response_text = await self._generate_content_with_fallback(prompt)
+            if not response_text:
+                return None
             
             clean_text = response_text.replace("```json", "").replace("```", "").strip()
             return json.loads(clean_text)
         except Exception as e:
-            erro_str = str(e)
-            if "429" in erro_str or "quota" in erro_str.lower() or "rate limit" in erro_str.lower():
-                print(f"⚠️ Quota da API excedida. Aguarde alguns minutos e tente novamente.")
-            else:
-                print(f"Erro ao processar JSON da IA: {e}")
+            print(f"Erro ao processar JSON da IA: {e}")
             return None
 
     async def parse_edit_intent(self, text: str, all_tags: list, metodo_options: list):
@@ -68,8 +96,9 @@ class AIService:
         """
         prompt = get_edit_intent_prompt(text, all_tags, metodo_options)
         try:
-            response = self.model.generate_content(prompt)
-            response_text = response.text
+            response_text = await self._generate_content_with_fallback(prompt)
+            if not response_text:
+                return None
             
             clean_text = response_text.replace("```json", "").replace("```", "").strip()
             return json.loads(clean_text)
@@ -85,8 +114,10 @@ class AIService:
         prompt = get_past_edit_prompt(text, all_tags, metodo_options)
 
         try:
-            response = self.model.generate_content(prompt)
-            clean_text = response.text.replace("```json", "").replace("```", "").strip()
+            response_text = await self._generate_content_with_fallback(prompt)
+            if not response_text:
+                return None
+            clean_text = response_text.replace("```json", "").replace("```", "").strip()
             return json.loads(clean_text)
         except Exception as e:
             print(f"Erro ao processar JSON de edição passada: {e}")
@@ -98,8 +129,10 @@ class AIService:
         """
         prompt = get_tag_intent_prompt(text)
         try:
-            response = self.model.generate_content(prompt)
-            clean_text = response.text.replace("```json", "").replace("```", "").strip()
+            response_text = await self._generate_content_with_fallback(prompt)
+            if not response_text:
+                return None
+            clean_text = response_text.replace("```json", "").replace("```", "").strip()
             return json.loads(clean_text)
         except Exception as e:
             return None

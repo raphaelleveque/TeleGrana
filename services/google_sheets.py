@@ -91,7 +91,7 @@ class GoogleSheetsService:
                 return True
         return False
 
-    def add_expense(self, valor, descricao, reembolsado=0, tags="", metodo_pagamento=""):
+    def add_expense(self, valor, descricao, reembolsado=0, tags="", metodo_pagamento="", data_custom=None):
         """Adiciona uma nova linha de gasto e retorna o número da linha.
         
         Args:
@@ -100,11 +100,16 @@ class GoogleSheetsService:
             reembolsado: Valor reembolsado em reais (padrão: 0)
             tags: Tag da categoria (padrão: "")
             metodo_pagamento: Método de pagamento (padrão: "")
+            data_custom: Data no formato dd/mm/yyyy (opcional)
         
         Returns:
             int: O número da linha onde os dados foram inseridos.
         """
-        data = datetime.now().strftime('%d/%m/%Y %H:%M')
+        if data_custom:
+            data = data_custom
+        else:
+            data = datetime.now().strftime('%d/%m/%Y %H:%M')
+            
         # Ordem: Data, Valor, Reembolsado, Descrição, Tags, Método de Pagamento
         nova_linha = [data, valor, reembolsado, descricao, tags, metodo_pagamento]
         result = self.ws.append_row(nova_linha)

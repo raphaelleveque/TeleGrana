@@ -32,6 +32,15 @@ async def handle_edit(message: types.Message, state: FSMContext):
     if message.from_user.id != MY_ID: return
     
     text = message.text.strip()
+    
+    # Proteção: Antes de tentar editar, verifica se a mensagem parece uma NOVA intenção clara 
+    # (como um novo reembolso ou gasto), para evitar falsos positivos de edição.
+    reemb_check = await ai_service.parse_reimbursement(text)
+    if reemb_check and reemb_check.get("is_reimbursement"):
+        await state.clear()
+        await handle_message(message, state)
+        return
+
     ai_result = await ai_service.parse_edit_intent(text, service.tag_options, service.metodo_options)
 
     # Verifica se a IA identificou uma tentativa de edição
@@ -55,8 +64,8 @@ async def handle_edit(message: types.Message, state: FSMContext):
         # Mapeia o campo da IA para a função de atualização correspondente
         if field == "tags":
             new_category = str(new_value).capitalize()
-            is_new = sheets.add_category(new_category)
-            sheets.update_expense_category(last_row, new_category)
+            is_new = service.add_category(new_category)
+            service.update_expense_category(last_row, new_category)
             response = f"✅ Categoria atualizada para **{new_category}**!"
             if is_new:
                 response += f"\n🎉 Nova categoria criada: '{new_category}'."
@@ -64,7 +73,7 @@ async def handle_edit(message: types.Message, state: FSMContext):
         elif field == "valor":
             try:
                 new_value_float = float(new_value)
-                sheets.update_expense_value(last_row, new_value_float)
+                service.update_expense_value(last_row, new_value_float)
                 response = f"✅ Valor alterado para **R$ {new_value_float:.2f}**!"
             except (ValueError, TypeError):
                 await message.answer("⚠️ O valor fornecido não parece ser um número válido.")
@@ -72,15 +81,15 @@ async def handle_edit(message: types.Message, state: FSMContext):
 
         elif field == "descricao":
             new_desc = str(new_value)
-            sheets.update_description(last_row, new_desc)
+            service.update_description(last_row, new_desc)
             response = f"✅ Descrição alterada para: \"{new_desc}\"."
 
         elif field == "metodo_pagamento":
             new_method = str(new_value).capitalize()
-            if new_method not in sheets.metodo_options:
-                await message.answer(f"⚠️ Método de pagamento '{new_method}' não é válido. Opções: {', '.join(sheets.metodo_options)}.")
+            if new_method not in service.metodo_options:
+                await message.answer(f"⚠️ Método de pagamento '{new_method}' não é válido. Opções: {', '.join(service.metodo_options)}.")
                 return
-            sheets.update_payment_method(last_row, new_method)
+            service.update_payment_method(last_row, new_method)
             response = f"✅ Método de pagamento alterado para **{new_method}**."
 
         else:
@@ -115,7 +124,7 @@ async def handle_reimbursement_choice(message: types.Message, state: FSMContext)
         return
     
     # Processa o reembolso com o item escolhido
-    await process_reimbursement(message, matches, choice_idx, valor_reembolsado, sheets)
+    await process_reimbursement(message, matches, choice_idx, valor_reembolsado, service)
     await state.clear()
 
 async def process_reimbursement(message, matches_data, choice_idx, valor_reembolsado, service):
@@ -170,7 +179,7 @@ async def handle_message(message: types.Message, state: FSMContext):
             return
         
         # Tenta buscar (se data for None, a busca deve suportar isso)
-        matches = sheets.find_expense_by_date_and_desc(data_compra, descricao_compra)
+        matches = service.find_expense_by_date_and_desc(data_compra, descricao_compra)
         
         if not matches:
             await message.answer(f"⚠️ Não encontrei despesa de '{descricao_compra}'" + (f" em {data_compra}." if data_compra else "."))
@@ -224,7 +233,32 @@ async def handle_message(message: types.Message, state: FSMContext):
                 await message.answer("⚠️ Não entendi o nome da tag.")
             return
 
-    # 3. Tenta processar como edição de transação passada
+    # 3. Tenta processar como despesa/entrada normal
+    ai_result = await ai_service.parse_expense(text, service.expense_tags, service.income_tags)
+    
+    if ai_result and ai_result.get("valor") is not None:
+        valor = float(ai_result["valor"])
+        descricao = ai_result.get("descricao", "Sem descrição")
+        tags = ai_result.get("tags", "Outros")
+        metodo = ai_result.get("metodo_pagamento", "")
+        
+        is_gasto = valor < 0
+        tipo_operacao = "Gasto" if is_gasto else "Entrada"
+        
+        # Salva o estado inicial e verifica o que falta
+        current_data = {
+            "valor": ai_result["valor"],
+            "descricao": ai_result.get("descricao"),
+            "tags": ai_result.get("tags"),
+            "metodo_pagamento": ai_result.get("metodo_pagamento"),
+            "data": ai_result.get("data"),
+            "type": tipo_operacao
+        }
+        await state.update_data(temp_expense=current_data)
+        await check_missing_info(message, state)
+        return
+
+    # 4. Tenta processar como edição de transação passada
     edit_result = await ai_service.parse_past_edit(text, service.tag_options, service.metodo_options)
 
     if edit_result and edit_result.get("is_past_edit"):
@@ -252,14 +286,14 @@ async def handle_message(message: types.Message, state: FSMContext):
         
         if updates.get("tag"):
             new_tag = str(updates["tag"]).capitalize()
-            # Validação/Criação já tratada no service.add_category se fosse o caso, mas aqui usamos sheets direto via proxy
+            # Validação/Criação já tratada no service.add_category se fosse o caso, mas aqui usamos o service proxy
             service.add_category(new_tag) # Garante que existe na lista validada
             service.update_expense_category(row_index, new_tag)
             response_parts.append(f"🏷️ Tag: {new_tag}")
             
         if updates.get("payment_method"):
             new_method = str(updates["payment_method"]).capitalize()
-            sheets.update_payment_method(row_index, new_method)
+            service.update_payment_method(row_index, new_method)
             response_parts.append(f"💳 Método: {new_method}")
             
         if updates.get("amount") is not None:
@@ -278,39 +312,13 @@ async def handle_message(message: types.Message, state: FSMContext):
         await message.answer("\n".join(response_parts))
         return
 
-    # 3. Tenta processar como despesa/entrada normal
-    ai_result = await ai_service.parse_expense(text, service.expense_tags, service.income_tags)
-    
-    if ai_result and ai_result.get("valor") is not None:
-        valor = float(ai_result["valor"])
-        descricao = ai_result.get("descricao", "Sem descrição")
-        tags = ai_result.get("tags", "Outros")
-        metodo = ai_result.get("metodo_pagamento", "")
-        
-        is_gasto = valor < 0
-        tipo_operacao = "Gasto" if is_gasto else "Entrada"
-        
-        # Salva o estado inicial e verifica o que falta
-        current_data = {
-            "valor": ai_result["valor"],
-            "descricao": ai_result.get("descricao"),
-            "tags": ai_result.get("tags"),
-            "metodo_pagamento": ai_result.get("metodo_pagamento"),
-            "type": tipo_operacao
-        }
-        await state.update_data(temp_expense=current_data)
-        await check_missing_info(message, state)
-        return
-
-    else:
-        # Se a IA não conseguir processar
-        await message.answer(
-            "⚠️ Não consegui entender a mensagem.\n\n"
-            "📝 Tente usar um formato como:\n"
-            "• \"Gastei 50 no mercado\"\n"
-            "• \"Recebi 1000 de salário\"\n"
-            "• \"Reembolso de 50 da compra de ontem\""
-        )
+    # Se nada funcionou
+    await message.answer(
+        "🤔 Não entendi muito bem. Você pode dizer algo como:\n"
+        "• 'Gastei 50 reais no mercado'\n"
+        "• 'Altere o valor para 100'\n"
+        "• 'Reembolsou 20 reais do Uber de ontem'"
+    )
 
 @router.message(ExpenseState.AwaitingMissingInfo)
 async def handle_missing_info_response(message: types.Message, state: FSMContext):
@@ -330,14 +338,14 @@ async def handle_missing_info_response(message: types.Message, state: FSMContext
     if missing_field == "tags":
         clean_tag = text.title()
         # Se não existir, cria (ou avisa? MVP: Cria)
-        if clean_tag not in sheets.tag_options:
-             sheets.add_category(clean_tag)
+        if clean_tag not in service.tag_options:
+             service.add_category(clean_tag)
         temp_expense["tags"] = clean_tag
         
     elif missing_field == "metodo_pagamento":
         clean_method = text.title()
         # Validação simples
-        if clean_method not in sheets.metodo_options and "Caju" not in clean_method: 
+        if clean_method not in service.metodo_options and "Caju" not in clean_method: 
              # Aceita mas avisa, ou mapeia? Vamos aceitar o texto do user se não for absurdo
              pass
         temp_expense["metodo_pagamento"] = clean_method
@@ -363,14 +371,14 @@ async def check_missing_info(message: types.Message, state: FSMContext):
     if not data.get("tags"):
         await state.update_data(missing_field="tags")
         await state.set_state(ExpenseState.AwaitingMissingInfo)
-        opts = ", ".join(sheets.tag_options)
+        opts = ", ".join(service.tag_options)
         await message.answer(f"🏷️ Qual a categoria (tag)?\nOpções: {opts}")
         return
 
     if not data.get("metodo_pagamento"):
         await state.update_data(missing_field="metodo_pagamento")
         await state.set_state(ExpenseState.AwaitingMissingInfo)
-        opts = ", ".join(sheets.metodo_options)
+        opts = ", ".join(service.metodo_options)
         await message.answer(f"💳 Qual o método de pagamento?\nOpções: {opts}")
         return
         
@@ -383,14 +391,17 @@ async def final_save(message, state, data):
         valor=data["valor"],
         descricao=data["descricao"],
         tags=data["tags"],
-        metodo=data["metodo_pagamento"]
+        metodo=data["metodo_pagamento"],
+        data=data.get("data")
     )
+    
+    data_formatada = data.get("data") or "hoje"
         
     valor_abs = result["valor_abs"]
     emoji = "💸" if result["is_expense"] else "💰"
     tipo_operacao = data["type"] # Poderia vir do result tbm se quisesse
     
-    resposta = f"{emoji} {tipo_operacao}: R$ {valor_abs:.2f}\n✅ Salvos na planilha!"
+    resposta = f"{emoji} {tipo_operacao}: R$ {valor_abs:.2f}\n📅 Data: {data_formatada}\n✅ Salvos na planilha!"
     resposta += f"\n🏷️ Tag: {result['tags']}"
     resposta += f"\n💳 Método: {result['metodo_clean']}"
         
