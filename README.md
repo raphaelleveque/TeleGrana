@@ -93,6 +93,14 @@ Se você gastou R$ 100 e foi reembolsado em R$ 40, seu gasto real foi R$ 60. Se 
 
 ---
 
+## ☁️ Deploy (Executar 24/7)
+
+Se você quiser que o seu bot fique online o tempo todo, sem depender do seu computador ligado, preparamos um guia completo para deploy no **Google Cloud (Plano Gratuito)**:
+
+👉 **[Guia de Deploy (GCP)](DEPLOYMENT.md)**
+
+---
+
 ## 📁 Estrutura do Projeto
 - `main.py`: Inicia o bot.
 - `bot/handlers.py`: Toda a lógica de conversa e captura de mensagens.
