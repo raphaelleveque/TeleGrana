@@ -158,7 +158,7 @@ def get_query_intent_prompt(text, current_date, metodo_options):
     2. QUERY_TYPE:
        - "spent": quanto gastou.
        - "gain": quanto ganhou/recebeu.
-       - "summary": resumo (opcional).
+       - "summary": resumo, saldo total (ganhos - gastos).
     3. FILTERS:
        - "exclude_methods": Lista de métodos de pagamento a EXCLUIR (ex: "sem caju").
        - "include_methods": Lista de métodos de pagamento a INCLUIR exclusivamente (ex: "no crédito").
@@ -185,6 +185,7 @@ def get_query_intent_prompt(text, current_date, metodo_options):
     Exemplos:
     - "Quanto eu gastei hoje?" -> {{"is_query": true, "start_date": "17/01/2026", "end_date": "18/01/2026", "label": "hoje", "query_type": "spent", "exclude_methods": [], "include_methods": []}}
     - "Quanto gastei anteontem?" -> {{"is_query": true, "start_date": "15/01/2026", "end_date": "16/01/2026", "label": "anteontem", "query_type": "spent", "exclude_methods": [], "include_methods": []}}
+    - "Qual meu saldo esse mês?" -> {{"is_query": true, "start_date": "01/01/2026", "end_date": "01/02/2026", "label": "este mês", "query_type": "summary", "exclude_methods": [], "include_methods": []}}
     - "Quanto gastei na semana passada?" -> {{"is_query": true, "start_date": "05/01/2026", "end_date": "12/01/2026", "label": "semana passada", "query_type": "spent", "exclude_methods": [], "include_methods": []}}
     - "Quanto gastei dia 12?" -> {{"is_query": true, "start_date": "12/01/2026", "end_date": "13/01/2026", "label": "dia 12", "query_type": "spent", "exclude_methods": [], "include_methods": []}}
     - "Comprei um pão" -> {{"is_query": false}}

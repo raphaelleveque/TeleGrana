@@ -255,6 +255,9 @@ async def handle_message(message: types.Message, state: FSMContext):
             
         msg += "\n"
         
+        if qt == "summary":
+            msg += f"⚖️ *Saldo Líquido:* R$ {totals['balance']:.2f}\n\n"
+            
         # Mostra o Gasto Líquido
         if qt == "spent" or qt == "summary":
             msg += f"💸 *Gastos Líquidos:* R$ {totals['spent']:.2f}\n"
@@ -284,9 +287,6 @@ async def handle_message(message: types.Message, state: FSMContext):
                     for item in gains[:5]:
                         msg += f"• {item['desc']}: `R$ {item['val']:.2f}`\n"
             msg += "\n"
-            
-        if qt == "summary":
-            msg += f"⚖️ *Saldo Líquido:* R$ {(totals['gain'] - totals['spent']):.2f}"
             
         await message.answer(msg)
         return

@@ -312,6 +312,7 @@ class TransactionService:
         return {
             "spent": total_spent,
             "gain": total_gain,
+            "balance": total_gain - total_spent,
             "items": items_included,
             "query_type": query_type
         }
