@@ -144,3 +144,48 @@ def get_tag_intent_prompt(text):
     "Adicionar categoria Carro" -> {{"action": "create", "tag_name": "Carro"}}
     "Quais tags existem?" -> {{"action": "list", "tag_name": null}}
     """
+
+def get_query_intent_prompt(text, current_date, metodo_options):
+    return f"""
+    Você é um assistente financeiro. Estamos em {current_date}.
+    Analise a pergunta do usuário sobre seus gastos/ganhos: "{text}"
+
+    Identifique os parâmetros da consulta:
+    1. DATE_RANGE:
+       - "start_date": data de início no formato dd/mm/yyyy.
+       - "end_date": data de fim no formato dd/mm/yyyy (exclusive, ou seja, até o início desse dia).
+       - "label": como descrever esse período (ex: "hoje", "ontem", "anteontem", "esta semana", "semana passada", "dia 12").
+    2. QUERY_TYPE:
+       - "spent": quanto gastou.
+       - "gain": quanto ganhou/recebeu.
+       - "summary": resumo (opcional).
+    3. FILTERS:
+       - "exclude_methods": Lista de métodos de pagamento a EXCLUIR (ex: "sem caju").
+       - "include_methods": Lista de métodos de pagamento a INCLUIR exclusivamente (ex: "no crédito").
+    
+    Opções de métodos conhecidos: {metodo_options}
+
+    DICAS DE DATA:
+    - Hoje: {current_date}
+    - Ontem: dia anterior a {current_date}
+    - Semana passada: intervalo de 7 dias terminando no último domingo.
+    - Dia X: start_date=X/mes/ano, end_date=(X+1)/mes/ano.
+
+    Retorne APENAS um JSON:
+    {{
+        "is_query": boolean,
+        "start_date": str (dd/mm/yyyy) | null,
+        "end_date": str (dd/mm/yyyy) | null,
+        "label": str,
+        "query_type": "spent" | "gain" | "summary",
+        "exclude_methods": [str],
+        "include_methods": [str]
+    }}
+
+    Exemplos:
+    - "Quanto eu gastei hoje?" -> {{"is_query": true, "start_date": "17/01/2026", "end_date": "18/01/2026", "label": "hoje", "query_type": "spent", "exclude_methods": [], "include_methods": []}}
+    - "Quanto gastei anteontem?" -> {{"is_query": true, "start_date": "15/01/2026", "end_date": "16/01/2026", "label": "anteontem", "query_type": "spent", "exclude_methods": [], "include_methods": []}}
+    - "Quanto gastei na semana passada?" -> {{"is_query": true, "start_date": "05/01/2026", "end_date": "12/01/2026", "label": "semana passada", "query_type": "spent", "exclude_methods": [], "include_methods": []}}
+    - "Quanto gastei dia 12?" -> {{"is_query": true, "start_date": "12/01/2026", "end_date": "13/01/2026", "label": "dia 12", "query_type": "spent", "exclude_methods": [], "include_methods": []}}
+    - "Comprei um pão" -> {{"is_query": false}}
+    """

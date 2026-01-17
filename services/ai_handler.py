@@ -8,7 +8,8 @@ from utils.prompts import (
     get_reimbursement_prompt,
     get_edit_intent_prompt,
     get_past_edit_prompt,
-    get_tag_intent_prompt
+    get_tag_intent_prompt,
+    get_query_intent_prompt
 )
 
 load_dotenv()
@@ -135,4 +136,20 @@ class AIService:
             clean_text = response_text.replace("```json", "").replace("```", "").strip()
             return json.loads(clean_text)
         except Exception as e:
+            return None
+
+    async def parse_query_intent(self, text: str, metodo_options: list):
+        """
+        Detecta se o usuário está fazendo uma pergunta sobre gastos/ganhos.
+        """
+        current_date = datetime.now().strftime('%d/%m/%Y')
+        prompt = get_query_intent_prompt(text, current_date, metodo_options)
+        try:
+            response_text = await self._generate_content_with_fallback(prompt)
+            if not response_text:
+                return None
+            clean_text = response_text.replace("```json", "").replace("```", "").strip()
+            return json.loads(clean_text)
+        except Exception as e:
+            print(f"Erro ao processar JSON de consulta: {e}")
             return None

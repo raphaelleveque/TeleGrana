@@ -233,7 +233,65 @@ async def handle_message(message: types.Message, state: FSMContext):
                 await message.answer("⚠️ Não entendi o nome da tag.")
             return
 
-    # 3. Tenta processar como despesa/entrada normal
+    # 3. Tenta processar como consulta (Get)
+    query_result = await ai_service.parse_query_intent(text, service.metodo_options)
+    if query_result and query_result.get("is_query"):
+        totals = service.calculate_totals(
+            start_date_str=query_result.get("start_date"),
+            end_date_str=query_result.get("end_date"),
+            query_type=query_result.get("query_type"),
+            exclude_methods=query_result.get("exclude_methods"),
+            include_methods=query_result.get("include_methods")
+        )
+        
+        period_lab = query_result.get("label") or "período"
+        qt = query_result.get("query_type")
+        msg = f"📊 **Resumo de {period_lab}:**\n"
+        
+        if query_result.get("exclude_methods"):
+            msg += f"🚫 (Excluindo: {', '.join(query_result['exclude_methods'])})\n"
+        if query_result.get("include_methods"):
+            msg += f"🎯 (Apenas: {', '.join(query_result['include_methods'])})\n"
+            
+        msg += "\n"
+        
+        # Mostra o Gasto Líquido
+        if qt == "spent" or qt == "summary":
+            msg += f"💸 **Gastos Líquidos:** R$ {totals['spent']:.2f}\n"
+            
+            # Adiciona breakdown se houver itens
+            if totals["items"]:
+                # Pega os 5 maiores gastos
+                expenses = [i for i in totals["items"] if i["val"] < 0]
+                expenses.sort(key=lambda x: x["val"]) # Mais negativos primeiro
+                
+                if expenses:
+                    msg += "__Principais itens:__\n"
+                    for item in expenses[:5]:
+                        msg += f"• {item['desc']}: `R$ {abs(item['val']):.2f}`\n"
+            msg += "\n"
+
+        # Mostra Total Recebido
+        if qt == "gain" or qt == "summary":
+            msg += f"💰 **Total Recebido:** R$ {totals['gain']:.2f}\n"
+            
+            # Adiciona breakdown de ganhos se houver e for relevante
+            if qt == "gain" or totals["gain"] > 0:
+                gains = [i for i in totals["items"] if i["val"] > 0]
+                gains.sort(key=lambda x: x["val"], reverse=True)
+                if gains:
+                    msg += "__Principais ganhos:__\n"
+                    for item in gains[:5]:
+                        msg += f"• {item['desc']}: `R$ {item['val']:.2f}`\n"
+            msg += "\n"
+            
+        if qt == "summary":
+            msg += f"⚖️ **Saldo Líquido:** R$ {(totals['gain'] - totals['spent']):.2f}"
+            
+        await message.answer(msg)
+        return
+
+    # 4. Tenta processar como despesa/entrada normal
     ai_result = await ai_service.parse_expense(text, service.expense_tags, service.income_tags)
     
     if ai_result and ai_result.get("valor") is not None:

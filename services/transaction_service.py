@@ -231,6 +231,91 @@ class TransactionService:
             "is_expense": valor < 0
         }
 
+    def calculate_totals(self, start_date_str=None, end_date_str=None, query_type=None, exclude_methods=None, include_methods=None):
+        """
+        Calcula totais de gastos ou ganhos baseado em um range de datas e filtros.
+        Gasto = abs(Amount + Reimbursed) para Amount < 0.
+        Ganho = Amount para Amount > 0.
+        """
+        from datetime import datetime, timedelta
+        
+        all_rows = self.sheets.get_all_rows()
+        now = datetime.now()
+        
+        start_date = None
+        if start_date_str:
+            try:
+                start_date = datetime.strptime(start_date_str, "%d/%m/%Y")
+            except ValueError:
+                pass
+        
+        end_date = None
+        if end_date_str:
+            try:
+                end_date = datetime.strptime(end_date_str, "%d/%m/%Y")
+            except ValueError:
+                pass
+        
+        total_spent = 0.0
+        total_gain = 0.0
+        items_included = []
+        
+        # Filtros normalizados
+        excl_norm = [m.title() for m in (exclude_methods or [])]
+        incl_norm = [m.title() for m in (include_methods or [])]
+
+        for row in all_rows[1:]:
+            t = Transaction.from_row(row)
+            
+            # 1. Filtro de Data
+            try:
+                t_date_str = t.date.split()[0]
+                t_date = datetime.strptime(t_date_str, "%d/%m/%Y")
+                
+                if start_date and t_date < start_date:
+                    continue
+                if end_date and t_date >= end_date:
+                    continue
+            except (ValueError, IndexError, TypeError):
+                continue
+                
+            # 2. Filtro de Métodos (Caju, Crédito, etc)
+            metodo_t = (t.payment_method or "").title()
+            
+            if excl_norm and metodo_t in excl_norm:
+                continue
+            if incl_norm and metodo_t not in incl_norm:
+                continue
+            
+            # 3. Lógica de Cálculo
+            # Gasto Líquido = Amount + Reimbursed (se < 0)
+            # Ganho = Amount + Reimbursed (se > 0)
+            net_val = t.amount + t.reimbursed_amount
+            
+            if net_val < 0:
+                abs_net = abs(net_val)
+                total_spent += abs_net
+                items_included.append({
+                    "desc": t.description or "Sem descrição",
+                    "val": -abs_net,
+                    "date": t_date_str
+                })
+            elif net_val > 0:
+                total_gain += net_val
+                items_included.append({
+                    "desc": t.description or "Sem descrição",
+                    "val": net_val,
+                    "date": t_date_str
+                })
+            # Se net_val == 0, ignoramos do total (totalmente reembolsado)
+                
+        return {
+            "spent": total_spent,
+            "gain": total_gain,
+            "items": items_included,
+            "query_type": query_type
+        }
+
     # Proxy methods for updates (could be refactored further but needed for edit handlers)
     def update_expense_category(self, row, val): return self.sheets.update_expense_category(row, val)
     def update_expense_value(self, row, val): return self.sheets.update_expense_value(row, val)
