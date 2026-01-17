@@ -1,11 +1,24 @@
 import os
+import json
 import gspread
 from datetime import datetime, timedelta, date
 from gspread_formatting import *
 
 class GoogleSheetsService:
     def __init__(self):
-        self.gc = gspread.service_account(filename='credentials.json')
+        # Tenta carregar credenciais de variável de ambiente (para deploy) 
+        # ou do arquivo local credentials.json
+        creds_json = os.getenv('GOOGLE_SERVICE_ACCOUNT_JSON')
+        if creds_json:
+            try:
+                creds_dict = json.loads(creds_json)
+                self.gc = gspread.service_account_from_dict(creds_dict)
+            except Exception as e:
+                print(f"❌ Erro ao processar GOOGLE_SERVICE_ACCOUNT_JSON: {e}")
+                self.gc = gspread.service_account(filename='credentials.json')
+        else:
+            self.gc = gspread.service_account(filename='credentials.json')
+
         sheet_id = os.getenv('GOOGLE_SHEET_ID')
         
         if not sheet_id:
@@ -18,7 +31,7 @@ class GoogleSheetsService:
             print(f"❌ Erro ao abrir planilha com ID: {sheet_id}")
             raise e
 
-        self.expense_tags = ["Mercado", "Viagem", "Restaurante", "Academia", "Compras", "Gasolina", "Outros"]
+        self.expense_tags = ["Mercado", "Viagem", "Restaurante", "Academia", "Compras", "Gasolina", "Uber", "Outros"]
         self.income_tags = ["Salário", "Presente", "Reembolso", "Outros"]
         self.tag_options = list(set(self.expense_tags + self.income_tags))
         self.metodo_options = ["Pix", "Crédito", "Débito", "Caju"]

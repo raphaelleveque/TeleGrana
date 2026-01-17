@@ -165,210 +165,181 @@ async def handle_message(message: types.Message, state: FSMContext):
     await state.clear()
     text = message.text.strip()
     
-    # 1. Tenta processar como reembolso
-    reembolso_result = await ai_service.parse_reimbursement(text)
+    # 1. Roteamento de Intenção (Fase 1)
+    routing = await ai_service.detect_intent(text)
+    intent = routing.get("intent", "other")
     
-    if reembolso_result and reembolso_result.get("is_reimbursement"):
-        # Lógica de reembolso...
-        valor_reembolsado = reembolso_result.get("valor_reembolsado")
-        data_compra = reembolso_result.get("data_compra")
-        descricao_compra = reembolso_result.get("descricao_compra", "")
-        
-        if not valor_reembolsado:
-            await message.answer("⚠️ Não consegui identificar o valor do reembolso.")
-            return
-        
-        # Tenta buscar (se data for None, a busca deve suportar isso)
-        matches = service.find_expense_by_date_and_desc(data_compra, descricao_compra)
-        
-        if not matches:
-            await message.answer(f"⚠️ Não encontrei despesa de '{descricao_compra}'" + (f" em {data_compra}." if data_compra else "."))
-            return
-        
-        if len(matches) > 1:
-            # Matches multiplos - pede para o usuário escolher
-            response_msg = "⚠️ Encontrei mais de uma transação. Qual delas?\n\n"
-            match_options = []
+    # 2. Execução (Fase 2)
+    
+    # --- REEMBOLSO ---
+    if intent == "reimburse":
+        reembolso_result = await ai_service.parse_reimbursement(text)
+        if reembolso_result and reembolso_result.get("is_reimbursement"):
+            valor_reembolsado = reembolso_result.get("valor_reembolsado")
+            data_compra = reembolso_result.get("data_compra")
+            descricao_compra = reembolso_result.get("descricao_compra", "")
             
-            # matches é lista de Transaction objects
-            for idx, transaction in enumerate(matches, 1):
-                response_msg += f"{idx}. {transaction.date} - {transaction.description} ({transaction.amount})\n"
-                # Serializa para o estado
-                match_options.append({"row_index": transaction.row_index, "row_data": transaction.to_row()})
+            if not valor_reembolsado:
+                await message.answer("⚠️ Não consegui identificar o valor do reembolso.")
+                return
             
-            response_msg += "\nResponda com o número da opção (ex: 1)"
+            matches = service.find_expense_by_date_and_desc(data_compra, descricao_compra)
+            if not matches:
+                await message.answer(f"⚠️ Não encontrei despesa de '{descricao_compra}'" + (f" em {data_compra}." if data_compra else "."))
+                return
             
-            await state.set_state(ExpenseState.AwaitingReimbursementChoice)
-            await state.set_data({"reimbursement_matches": match_options, "valor_reembolsado": valor_reembolsado})
-            await message.answer(response_msg)
-            return
-
-        # Único match - processa direto
-        transaction = matches[0]
-        # Serializa para manter consistência com a função process_reimbursement genérica
-        matches_data = [{"row_index": transaction.row_index, "row_data": transaction.to_row()}]
-        await process_reimbursement(message, matches_data, 0, valor_reembolsado, service)
-        return
-
-    # Passou direto se não for reembolso... (segue fluxo)
-
-
-    tag_result = await ai_service.parse_tag_intent(text)
-    if tag_result and tag_result.get("action"):
-        action = tag_result.get("action")
-        
-        if action == "list":
-            tags_str = ", ".join([f"`{t}`" for t in service.tag_options])
-            await message.answer(f"📋 *Suas Tags:*\n{tags_str}")
-            return
-            
-        if action == "create":
-            new_tag = tag_result.get("tag_name")
-            if new_tag:
-                if service.add_category(new_tag):
-                     await message.answer(f"✅ Tag *{new_tag}* criada com sucesso!")
-                else:
-                     await message.answer(f"⚠️ A tag *{new_tag}* já existe.")
-            else:
-                await message.answer("⚠️ Não entendi o nome da tag.")
-            return
-
-    # 3. Tenta processar como consulta (Get)
-    query_result = await ai_service.parse_query_intent(text, service.metodo_options)
-    if query_result and query_result.get("is_query"):
-        totals = service.calculate_totals(
-            start_date_str=query_result.get("start_date"),
-            end_date_str=query_result.get("end_date"),
-            query_type=query_result.get("query_type"),
-            exclude_methods=query_result.get("exclude_methods"),
-            include_methods=query_result.get("include_methods")
-        )
-        
-        period_lab = query_result.get("label") or "período"
-        qt = query_result.get("query_type")
-        msg = f"📊 *Resumo de {period_lab}:*\n"
-        
-        if query_result.get("exclude_methods"):
-            msg += f"🚫 (Excluindo: {', '.join(query_result['exclude_methods'])})\n"
-        if query_result.get("include_methods"):
-            msg += f"🎯 (Apenas: {', '.join(query_result['include_methods'])})\n"
-            
-        msg += "\n"
-        
-        if qt == "summary":
-            msg += f"⚖️ *Saldo Líquido:* R$ {totals['balance']:.2f}\n\n"
-            
-        # Mostra o Gasto Líquido
-        if qt == "spent" or qt == "summary":
-            msg += f"💸 *Gastos Líquidos:* R$ {totals['spent']:.2f}\n"
-            
-            # Adiciona breakdown se houver itens
-            if totals["items"]:
-                # Pega os 5 maiores gastos
-                expenses = [i for i in totals["items"] if i["val"] < 0]
-                expenses.sort(key=lambda x: x["val"]) # Mais negativos primeiro
+            if len(matches) > 1:
+                response_msg = "⚠️ Encontrei mais de uma transação. Qual delas?\n\n"
+                match_options = []
+                for idx, transaction in enumerate(matches, 1):
+                    response_msg += f"{idx}. {transaction.date} - {transaction.description} ({transaction.amount})\n"
+                    match_options.append({"row_index": transaction.row_index, "row_data": transaction.to_row()})
                 
-                if expenses:
-                    msg += "_Principais itens:_\n"
-                    for item in expenses[:5]:
-                        msg += f"• {item['desc']}: `R$ {abs(item['val']):.2f}`\n"
-            msg += "\n"
+                response_msg += "\nResponda com o número da opção (ex: 1)"
+                await state.set_state(ExpenseState.AwaitingReimbursementChoice)
+                await state.set_data({"reimbursement_matches": match_options, "valor_reembolsado": valor_reembolsado})
+                await message.answer(response_msg)
+                return
 
-        # Mostra Total Recebido
-        if qt == "gain" or qt == "summary":
-            msg += f"💰 *Total Recebido:* R$ {totals['gain']:.2f}\n"
-            
-            # Adiciona breakdown de ganhos se houver e for relevante
-            if qt == "gain" or totals["gain"] > 0:
-                gains = [i for i in totals["items"] if i["val"] > 0]
-                gains.sort(key=lambda x: x["val"], reverse=True)
-                if gains:
-                    msg += "_Principais ganhos:_\n"
-                    for item in gains[:5]:
-                        msg += f"• {item['desc']}: `R$ {item['val']:.2f}`\n"
-            msg += "\n"
-            
-        await message.answer(msg)
-        return
-
-    # 4. Tenta processar como despesa/entrada normal
-    ai_result = await ai_service.parse_expense(text, service.expense_tags, service.income_tags)
-    
-    if ai_result and ai_result.get("valor") is not None:
-        valor = float(ai_result["valor"])
-        descricao = ai_result.get("descricao", "Sem descrição")
-        tags = ai_result.get("tags", "Outros")
-        metodo = ai_result.get("metodo_pagamento", "")
-        
-        is_gasto = valor < 0
-        tipo_operacao = "Gasto" if is_gasto else "Entrada"
-        
-        # Salva o estado inicial e verifica o que falta
-        current_data = {
-            "valor": ai_result["valor"],
-            "descricao": ai_result.get("descricao"),
-            "tags": ai_result.get("tags"),
-            "metodo_pagamento": ai_result.get("metodo_pagamento"),
-            "data": ai_result.get("data"),
-            "type": tipo_operacao
-        }
-        await state.update_data(temp_expense=current_data)
-        await check_missing_info(message, state)
-        return
-
-    # 4. Tenta processar como edição de transação passada
-    edit_result = await ai_service.parse_past_edit(text, service.tag_options, service.metodo_options)
-
-    if edit_result and edit_result.get("is_past_edit"):
-        criteria = edit_result.get("search_criteria", {})
-        updates = edit_result.get("updates", {})
-        
-        matches = service.find_transaction(
-            date_query=criteria.get("date"),
-            amount_query=criteria.get("amount"),
-            desc_query=criteria.get("description")
-        )
-        
-        if not matches:
-            await message.answer("⚠️ Não encontrei nenhuma transação correspondente para editar.")
+            transaction = matches[0]
+            matches_data = [{"row_index": transaction.row_index, "row_data": transaction.to_row()}]
+            await process_reimbursement(message, matches_data, 0, valor_reembolsado, service)
             return
-        
-        if len(matches) > 1:
-            await message.answer(f"⚠️ Encontrei {len(matches)} transações parecidas. Tente ser mais específico (data ou valor exato).")
-            return
-        
-        # Encontrou uma única transação
-        transaction = matches[0]
-        row_index = transaction.row_index
-        response_parts = ["✅ Transação atualizada!"]
-        
-        if updates.get("tag"):
-            new_tag = str(updates["tag"]).capitalize()
-            # Validação/Criação já tratada no service.add_category se fosse o caso, mas aqui usamos o service proxy
-            service.add_category(new_tag) # Garante que existe na lista validada
-            service.update_expense_category(row_index, new_tag)
-            response_parts.append(f"🏷️ Tag: {new_tag}")
-            
-        if updates.get("payment_method"):
-            new_method = str(updates["payment_method"]).capitalize()
-            service.update_payment_method(row_index, new_method)
-            response_parts.append(f"💳 Método: {new_method}")
-            
-        if updates.get("amount") is not None:
-             # Mantém o sinal original da transação
-            old_val = transaction.amount
-            new_val_abs = abs(float(updates["amount"]))
-            new_val_signed = -new_val_abs if old_val < 0 else new_val_abs
-            service.update_expense_value(row_index, new_val_signed)
-            response_parts.append(f"💰 Valor: R$ {new_val_abs:.2f}")
 
-        if updates.get("description"):
-            new_desc = str(updates["description"])
-            service.update_description(row_index, new_desc)
-            response_parts.append(f"📝 Descrição: {new_desc}")
+    # --- INSERÇÃO (GASTO/GANHO) ---
+    elif intent == "insert":
+        ai_result = await ai_service.parse_expense(text, service.expense_tags, service.income_tags)
+        if ai_result and ai_result.get("valor") is not None:
+            valor = float(ai_result["valor"])
+            tipo_operacao = "Gasto" if valor < 0 else "Entrada"
             
-        await message.answer("\n".join(response_parts))
-        return
+            current_data = {
+                "valor": ai_result["valor"],
+                "descricao": ai_result.get("descricao"),
+                "tags": ai_result.get("tags"),
+                "metodo_pagamento": ai_result.get("metodo_pagamento"),
+                "data": ai_result.get("data"),
+                "type": tipo_operacao
+            }
+            await state.update_data(temp_expense=current_data)
+            await check_missing_info(message, state)
+            return
+
+    # --- CONSULTA (QUERY/SALDO) ---
+    elif intent == "query":
+        query_result = await ai_service.parse_query_intent(text, service.metodo_options)
+        if query_result and query_result.get("is_query"):
+            totals = service.calculate_totals(
+                start_date_str=query_result.get("start_date"),
+                end_date_str=query_result.get("end_date"),
+                query_type=query_result.get("query_type"),
+                exclude_methods=query_result.get("exclude_methods"),
+                include_methods=query_result.get("include_methods")
+            )
+            
+            period_lab = query_result.get("label") or "período"
+            qt = query_result.get("query_type")
+            msg = f"📊 *Resumo de {period_lab}:*\n"
+            
+            if query_result.get("exclude_methods"):
+                msg += f"🚫 (Excluindo: {', '.join(query_result['exclude_methods'])})\n"
+            if query_result.get("include_methods"):
+                msg += f"🎯 (Apenas: {', '.join(query_result['include_methods'])})\n"
+                
+            msg += "\n"
+            if qt == "summary":
+                msg += f"⚖️ *Saldo Líquido:* R$ {totals['balance']:.2f}\n\n"
+                
+            if qt == "spent" or qt == "summary":
+                msg += f"💸 *Gastos Líquidos:* R$ {totals['spent']:.2f}\n"
+                if totals["items"]:
+                    expenses = [i for i in totals["items"] if i["val"] < 0]
+                    expenses.sort(key=lambda x: x["val"])
+                    if expenses:
+                        msg += "_Principais itens:_\n"
+                        for item in expenses[:5]:
+                            msg += f"• {item['desc']}: `R$ {abs(item['val']):.2f}`\n"
+                msg += "\n"
+
+            if qt == "gain" or qt == "summary":
+                msg += f"💰 *Total Recebido:* R$ {totals['gain']:.2f}\n"
+                if qt == "gain" or totals["gain"] > 0:
+                    gains = [i for i in totals["items"] if i["val"] > 0]
+                    gains.sort(key=lambda x: x["val"], reverse=True)
+                    if gains:
+                        msg += "_Principais ganhos:_\n"
+                        for item in gains[:5]:
+                            msg += f"• {item['desc']}: `R$ {item['val']:.2f}`\n"
+                msg += "\n"
+                
+            await message.answer(msg)
+            return
+
+    # --- TAGS ---
+    elif intent == "tags":
+        tag_result = await ai_service.parse_tag_intent(text)
+        if tag_result and tag_result.get("action"):
+            action = tag_result.get("action")
+            if action == "list":
+                tags_str = ", ".join([f"`{t}`" for t in service.tag_options])
+                await message.answer(f"📋 *Suas Tags:*\n{tags_str}")
+                return
+            if action == "create":
+                new_tag = tag_result.get("tag_name")
+                if new_tag:
+                    if service.add_category(new_tag):
+                         await message.answer(f"✅ Tag *{new_tag}* criada com sucesso!")
+                    else:
+                         await message.answer(f"⚠️ A tag *{new_tag}* já existe.")
+                else:
+                    await message.answer("⚠️ Não entendi o nome da tag.")
+                return
+
+    # --- EDIÇÃO ---
+    elif intent == "edit":
+        edit_result = await ai_service.parse_past_edit(text, service.tag_options, service.metodo_options)
+        if edit_result and edit_result.get("is_past_edit"):
+            criteria = edit_result.get("search_criteria", {})
+            updates = edit_result.get("updates", {})
+            matches = service.find_transaction(
+                date_query=criteria.get("date"),
+                amount_query=criteria.get("amount"),
+                desc_query=criteria.get("description")
+            )
+            
+            if not matches:
+                await message.answer("⚠️ Não encontrei nenhuma transação correspondente para editar.")
+                return
+            if len(matches) > 1:
+                await message.answer(f"⚠️ Encontrei {len(matches)} transações parecidas. Tente ser mais específico (data ou valor exato).")
+                return
+            
+            transaction = matches[0]
+            row_index = transaction.row_index
+            response_parts = ["✅ Transação atualizada!"]
+            
+            if updates.get("tag"):
+                new_tag = str(updates["tag"]).capitalize()
+                service.add_category(new_tag)
+                service.update_expense_category(row_index, new_tag)
+                response_parts.append(f"🏷️ Tag: {new_tag}")
+            if updates.get("payment_method"):
+                new_method = str(updates["payment_method"]).capitalize()
+                service.update_payment_method(row_index, new_method)
+                response_parts.append(f"💳 Método: {new_method}")
+            if updates.get("amount") is not None:
+                old_val = transaction.amount
+                new_val_abs = abs(float(updates["amount"]))
+                new_val_signed = -new_val_abs if old_val < 0 else new_val_abs
+                service.update_expense_value(row_index, new_val_signed)
+                response_parts.append(f"💰 Valor: R$ {new_val_abs:.2f}")
+            if updates.get("description"):
+                new_desc = str(updates["description"])
+                service.update_description(row_index, new_desc)
+                response_parts.append(f"📝 Descrição: {new_desc}")
+                
+            await message.answer("\n".join(response_parts))
+            return
 
     # Se nada funcionou
     await message.answer(

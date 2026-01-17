@@ -43,48 +43,13 @@ def get_reimbursement_prompt(text, current_date):
     
     Retorne APENAS um JSON:
     {{
-        "is_reimbursement": boolean,
-        "valor_reembolsado": float (null se não for reembolso),
+        "is_reimbursement": true,
+        "valor_reembolsado": float (null se não encontrado),
         "data_compra": str no formato dd/mm/yyyy (null se não especificado),
         "descricao_compra": str (null se não especificado)
     }}
-    
-    EXEMPLO de reembolso:
-    "Minha mae me deu 500 reais para reembolsar o mercado que eu fiz no dia 15"
-    -> {{"is_reimbursement": true, "valor_reembolsado": 500.0, "data_compra": "15/XX/XXXX", "descricao_compra": "mercado"}} (use o ano e mês corretos)
     """
 
-def get_edit_intent_prompt(text, all_tags, metodo_options):
-    return f"""
-    Você é um assistente financeiro. O usuário acabou de registrar uma transação e pode querer editá-la.
-    Analise a frase do usuário: "{text}"
-
-    A frase indica que o usuário quer ALTERAR ou CORRIGIR algum campo da transação anterior?
-    Os campos editáveis são: 'valor', 'descricao', 'tags', 'metodo_pagamento'.
-
-    REGRAS:
-    - Se o usuário quer mudar a CATEGORIA/TAG, o campo é 'tags'. Opções conhecidas: {all_tags}.
-    - Se o usuário quer mudar o MÉTODO, o campo é 'metodo_pagamento'. Opções: {metodo_options}.
-    - Se o usuário quer mudar o VALOR, o campo é 'valor'.
-    - Se o usuário quer mudar a DESCRIÇÃO, o campo é 'descricao'.
-
-    IMPORTANTE: 
-    - Se a frase for um REEMBOLSO de algo (ex: "Minha mãe reembolsou..."), "is_edit_request" DEVE ser false. Reembolsos NÃO são edições de transações anteriores.
-    - Se a frase parecer o registro de uma NOVA transação, "is_edit_request" DEVE ser false.
-
-    Retorne APENAS um JSON:
-    {{
-        "is_edit_request": boolean,
-        "field": str (ou null),
-        "value": any (ou null)
-    }}
-
-    EXEMPLOS:
-    - "Altere o valor para 150" -> {{"is_edit_request": true, "field": "valor", "value": 150.0}}
-    - "A categoria é Viagem" -> {{"is_edit_request": true, "field": "tags", "value": "Viagem"}}
-    - "Minha mãe reembolsou 15000" -> {{"is_edit_request": false, "field": null, "value": null}}
-    - "Gastei 50 no mercado" -> {{"is_edit_request": false, "field": null, "value": null}}
-    """
 
 def get_past_edit_prompt(text, all_tags, metodo_options):
     return f"""
@@ -173,7 +138,7 @@ def get_query_intent_prompt(text, current_date, metodo_options):
 
     Retorne APENAS um JSON:
     {{
-        "is_query": boolean,
+        "is_query": true,
         "start_date": str (dd/mm/yyyy) | null,
         "end_date": str (dd/mm/yyyy) | null,
         "label": str,
@@ -181,12 +146,27 @@ def get_query_intent_prompt(text, current_date, metodo_options):
         "exclude_methods": [str],
         "include_methods": [str]
     }}
+    """
 
-    Exemplos:
-    - "Quanto eu gastei hoje?" -> {{"is_query": true, "start_date": "17/01/2026", "end_date": "18/01/2026", "label": "hoje", "query_type": "spent", "exclude_methods": [], "include_methods": []}}
-    - "Quanto gastei anteontem?" -> {{"is_query": true, "start_date": "15/01/2026", "end_date": "16/01/2026", "label": "anteontem", "query_type": "spent", "exclude_methods": [], "include_methods": []}}
-    - "Qual meu saldo esse mês?" -> {{"is_query": true, "start_date": "01/01/2026", "end_date": "01/02/2026", "label": "este mês", "query_type": "summary", "exclude_methods": [], "include_methods": []}}
-    - "Quanto gastei na semana passada?" -> {{"is_query": true, "start_date": "05/01/2026", "end_date": "12/01/2026", "label": "semana passada", "query_type": "spent", "exclude_methods": [], "include_methods": []}}
-    - "Quanto gastei dia 12?" -> {{"is_query": true, "start_date": "12/01/2026", "end_date": "13/01/2026", "label": "dia 12", "query_type": "spent", "exclude_methods": [], "include_methods": []}}
-    - "Comprei um pão" -> {{"is_query": false}}
+def get_intent_router_prompt(text):
+    return f"""
+    Você é o roteador de um assistente financeiro. 
+    Sua missão é IDENTIFICAR a intenção do usuário na frase: "{text}"
+
+    Escolha APENAS UM dos intents abaixo:
+    1. "insert": O usuário está relatando um novo gasto ou ganho (ex: "comprei", "recebi", "paguei", "vendi", "almoço 50 reais").
+    2. "reimburse": O usuário está falando sobre um REEMBOLSO de algo já comprado (ex: "reembolsou", "recebi estorno de").
+    3. "query": O usuário quer ver um resumo, relatório ou saldo (ex: "quanto gastei", "meus gastos", "saldo", "total do mês").
+    4. "edit": O usuário quer ALTERAR uma transação que ele acabou de registrar ou uma específica do passado (ex: "mude a tag", "corrija o valor", "não foi no pix").
+    5. "tags": O usuário quer gerenciar categorias (ex: "quais minhas tags", "crie a tag X").
+    6. "other": Se não se encaixar em nenhum acima.
+
+    REGRAS CRÍTICAS:
+    - Se a frase contiver um VALOR e um ITEM (ex: "picolé 11 reais"), o intent é SEMPRE "insert", mesmo que tenha palavras de tempo como "hoje".
+    - Se a frase for uma pergunta genérica sobre dinheiro gasto, é "query".
+
+    Retorne APENAS um JSON:
+    {{
+        "intent": "insert" | "reimburse" | "query" | "edit" | "tags" | "other"
+    }}
     """
