@@ -17,7 +17,7 @@ async def cmd_start(message: types.Message, state: FSMContext):
     if message.from_user.id != MY_ID: return
     await state.clear()
     await message.answer(
-        "💰 **TeleGrana Ativo!**\n\n"
+        "💰 *TeleGrana Ativo!*\n\n"
         "📝 Envie suas despesas ou entradas em linguagem natural:\n"
         "💸 Gasto: \"Gastei 400 reais no mercado hoje, paguei no pix\"\n"
         "💰 Entrada: \"Recebi 10000 de salário hoje\"\n"
@@ -145,8 +145,8 @@ async def process_reimbursement(message, matches_data, choice_idx, valor_reembol
     if result["is_surplus"]:
         resposta = (
             f"✅ Reembolso processado com excedente!\n"
-            f"💰 A compra de R$ {result['valor_compra_abs']:.2f} foi **totalmente quitada**.\n"
-            f"📈 O troco de R$ {result['surplus_amount']:.2f} foi salvo como uma nova **Entrada** (Tag: Reembolso)."
+            f"💰 A compra de R$ {result['valor_compra_abs']:.2f} foi *totalmente quitada*.\n"
+            f"📈 O troco de R$ {result['surplus_amount']:.2f} foi salvo como uma nova *Entrada* (Tag: Reembolso)."
         )
     else:
         diferenca = result["diferenca"]
@@ -219,16 +219,16 @@ async def handle_message(message: types.Message, state: FSMContext):
         
         if action == "list":
             tags_str = ", ".join([f"`{t}`" for t in service.tag_options])
-            await message.answer(f"📋 **Suas Tags:**\n{tags_str}")
+            await message.answer(f"📋 *Suas Tags:*\n{tags_str}")
             return
             
         if action == "create":
             new_tag = tag_result.get("tag_name")
             if new_tag:
                 if service.add_category(new_tag):
-                     await message.answer(f"✅ Tag **{new_tag}** criada com sucesso!")
+                     await message.answer(f"✅ Tag *{new_tag}* criada com sucesso!")
                 else:
-                     await message.answer(f"⚠️ A tag **{new_tag}** já existe.")
+                     await message.answer(f"⚠️ A tag *{new_tag}* já existe.")
             else:
                 await message.answer("⚠️ Não entendi o nome da tag.")
             return
@@ -246,7 +246,7 @@ async def handle_message(message: types.Message, state: FSMContext):
         
         period_lab = query_result.get("label") or "período"
         qt = query_result.get("query_type")
-        msg = f"📊 **Resumo de {period_lab}:**\n"
+        msg = f"📊 *Resumo de {period_lab}:*\n"
         
         if query_result.get("exclude_methods"):
             msg += f"🚫 (Excluindo: {', '.join(query_result['exclude_methods'])})\n"
@@ -257,7 +257,7 @@ async def handle_message(message: types.Message, state: FSMContext):
         
         # Mostra o Gasto Líquido
         if qt == "spent" or qt == "summary":
-            msg += f"💸 **Gastos Líquidos:** R$ {totals['spent']:.2f}\n"
+            msg += f"💸 *Gastos Líquidos:* R$ {totals['spent']:.2f}\n"
             
             # Adiciona breakdown se houver itens
             if totals["items"]:
@@ -266,27 +266,27 @@ async def handle_message(message: types.Message, state: FSMContext):
                 expenses.sort(key=lambda x: x["val"]) # Mais negativos primeiro
                 
                 if expenses:
-                    msg += "__Principais itens:__\n"
+                    msg += "_Principais itens:_\n"
                     for item in expenses[:5]:
                         msg += f"• {item['desc']}: `R$ {abs(item['val']):.2f}`\n"
             msg += "\n"
 
         # Mostra Total Recebido
         if qt == "gain" or qt == "summary":
-            msg += f"💰 **Total Recebido:** R$ {totals['gain']:.2f}\n"
+            msg += f"💰 *Total Recebido:* R$ {totals['gain']:.2f}\n"
             
             # Adiciona breakdown de ganhos se houver e for relevante
             if qt == "gain" or totals["gain"] > 0:
                 gains = [i for i in totals["items"] if i["val"] > 0]
                 gains.sort(key=lambda x: x["val"], reverse=True)
                 if gains:
-                    msg += "__Principais ganhos:__\n"
+                    msg += "_Principais ganhos:_\n"
                     for item in gains[:5]:
                         msg += f"• {item['desc']}: `R$ {item['val']:.2f}`\n"
             msg += "\n"
             
         if qt == "summary":
-            msg += f"⚖️ **Saldo Líquido:** R$ {(totals['gain'] - totals['spent']):.2f}"
+            msg += f"⚖️ *Saldo Líquido:* R$ {(totals['gain'] - totals['spent']):.2f}"
             
         await message.answer(msg)
         return

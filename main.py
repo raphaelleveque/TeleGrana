@@ -5,6 +5,7 @@ from dotenv import load_dotenv
 load_dotenv() 
 
 from aiogram import Bot, Dispatcher
+from aiogram.client.default import DefaultBotProperties
 from bot.handlers import router
 from services.transaction_service import TransactionService 
 
@@ -19,7 +20,10 @@ async def main():
     print(f"--- {service.initialize_sheet()} ---") 
     
     # Inicializa serviços
-    bot = Bot(token=os.getenv('TELEGRAM_TOKEN'))
+    bot = Bot(
+        token=os.getenv('TELEGRAM_TOKEN'),
+        default=DefaultBotProperties(parse_mode="Markdown")
+    )
     dp = Dispatcher()
     dp.include_router(router)
 
