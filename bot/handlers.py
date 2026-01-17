@@ -33,25 +33,22 @@ async def handle_edit(message: types.Message, state: FSMContext):
     
     text = message.text.strip()
     
-    # Proteção: Antes de tentar editar, verifica se a mensagem parece uma NOVA intenção clara 
-    # (como um novo reembolso ou gasto), para evitar falsos positivos de edição.
-    reemb_check = await ai_service.parse_reimbursement(text)
-    if reemb_check and reemb_check.get("is_reimbursement"):
+    # 1. Detectar Intenção usando o Roteador
+    routing = await ai_service.detect_intent(text)
+    intent = routing.get("intent", "other")
+
+    # Se a intenção não for 'edit', limpamos o estado e processamos como uma mensagem nova
+    if intent != "edit":
         await state.clear()
-        await handle_message(message, state)
+        await handle_message(message, state) # Reprocessa no fluxo principal
         return
 
-    ai_result = await ai_service.parse_edit_intent(text, service.tag_options, service.metodo_options)
+    # 2. Se for 'edit', usamos o especialista em edição (parse_past_edit)
+    ai_result = await ai_service.parse_past_edit(text, service.tag_options, service.metodo_options)
 
-    # Verifica se a IA identificou uma tentativa de edição
-    if ai_result and ai_result.get("is_edit_request"):
-        field = ai_result.get("field")
-        new_value = ai_result.get("value")
-
-        if not field or new_value is None:
-            await message.answer("⚠️ Não consegui entender o que você quer alterar. Tente ser mais específico, como 'altere o valor para 50' ou 'a categoria é Lazer'.")
-            return
-
+    if ai_result and ai_result.get("is_past_edit"):
+        updates = ai_result.get("updates", {})
+        
         user_data = await state.get_data()
         last_row = user_data.get("last_transaction_row")
 
@@ -60,47 +57,42 @@ async def handle_edit(message: types.Message, state: FSMContext):
             await state.clear()
             return
         
-        response = ""
-        # Mapeia o campo da IA para a função de atualização correspondente
-        if field == "tags":
-            new_category = str(new_value).capitalize()
-            is_new = service.add_category(new_category)
-            service.update_expense_category(last_row, new_category)
-            response = f"✅ Categoria atualizada para **{new_category}**!"
-            if is_new:
-                response += f"\n🎉 Nova categoria criada: '{new_category}'."
+        response_parts = ["✅ Transação anterior atualizada!"]
         
-        elif field == "valor":
-            try:
-                new_value_float = float(new_value)
-                service.update_expense_value(last_row, new_value_float)
-                response = f"✅ Valor alterado para **R$ {new_value_float:.2f}**!"
-            except (ValueError, TypeError):
-                await message.answer("⚠️ O valor fornecido não parece ser um número válido.")
-                return
-
-        elif field == "descricao":
-            new_desc = str(new_value)
-            service.update_description(last_row, new_desc)
-            response = f"✅ Descrição alterada para: \"{new_desc}\"."
-
-        elif field == "metodo_pagamento":
-            new_method = str(new_value).capitalize()
-            if new_method not in service.metodo_options:
-                await message.answer(f"⚠️ Método de pagamento '{new_method}' não é válido. Opções: {', '.join(service.metodo_options)}.")
-                return
+        if updates.get("tag"):
+            new_tag = str(updates["tag"]).capitalize()
+            service.add_category(new_tag)
+            service.update_expense_category(last_row, new_tag)
+            response_parts.append(f"🏷️ Tag: {new_tag}")
+            
+        if updates.get("payment_method"):
+            new_method = str(updates["payment_method"]).capitalize()
             service.update_payment_method(last_row, new_method)
-            response = f"✅ Método de pagamento alterado para **{new_method}**."
+            response_parts.append(f"💳 Método: {new_method}")
+            
+        if updates.get("amount") is not None:
+            # Precisamos manter o sinal original
+            all_rows = service.sheets.get_all_rows()
+            row_data = all_rows[last_row - 1]
+            old_val = service.get_expense_value(row_data)
+            
+            new_val_abs = abs(float(updates["amount"]))
+            new_val_signed = -new_val_abs if old_val < 0 else new_val_abs
+            service.update_expense_value(last_row, new_val_signed)
+            response_parts.append(f"💰 Valor: R$ {new_val_abs:.2f}")
+            
+        if updates.get("description"):
+            new_desc = str(updates["description"])
+            service.update_description(last_row, new_desc)
+            response_parts.append(f"📝 Descrição: {new_desc}")
 
+        if len(response_parts) == 1:
+            await message.answer("❓ Não entendi o que você quer mudar. Tente algo como 'o valor é 50' ou 'a tag é Lazer'.")
         else:
-            await message.answer(f"⚠️ Não sei como alterar o campo '{field}'.")
-            return
-
-        await message.answer(response)
-        await state.clear()
-
+            await message.answer("\n".join(response_parts))
+            await state.clear()
     else:
-        # Se não for um comando de edição, limpa o estado e processa como uma nova mensagem
+        # Fallback caso a IA roteie para edit mas o especialista não extraia nada
         await state.clear()
         await handle_message(message, state)
 

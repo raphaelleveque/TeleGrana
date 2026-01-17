@@ -26,6 +26,7 @@ def ai_service():
     ("Me mostre meus ganhos deste mês", "query"),
     
     # Reimburse
+    ("Eu comprei um playstation 5 dia 16, minha mae reembolsou 2000 reais", "reimburse"),
     ("Reembolsou 20 reais do Uber", "reimburse"),
     ("Recebi estorno de 50 reais da Amazon", "reimburse"),
     ("Estorno do iFood dia 12", "reimburse"),

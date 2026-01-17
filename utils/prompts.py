@@ -10,19 +10,26 @@ def get_expense_classification_prompt(text, expense_tags, income_tags, current_d
     REGRAS DE CLASSIFICAÇÃO:
     - tags para GASTOS: {expense_tags}
     - tags para ENTRADAS: {income_tags}
+    - METODOLOGIA ESPECIAL: Toda vez que houver uma **entrada/receita** relacionada a "vale alimentação", "alimentação" ou "VR" no método "Caju", a "tags" DEVE ser obrigatoriamente "Salário".
     - metodo_pagamento: Escolha APENAS uma: [Pix, Crédito, Débito, Caju]. Se não mencionado, retorne null.
     - data: extraia a data mencionada no formato dd/mm/yyyy. Se não mencionado, retorne null. 
-      Se o usuário disser "dia 13", assuma o mês e ano atuais de {current_date}.
+    - Se o usuário disser "dia 13", assuma o mês e ano atuais de {current_date}.
     
     IMPORTANTE:
     - Se for GASTO: o valor deve ser NEGATIVO (ex: -400)
     - Se for ENTRADA: o valor deve ser POSITIVO (ex: 10000)
+    
+    PROIBIÇÕES TÓXICAS (NUNCA FAÇA):
+    - É **PROIBIDO** inventar ou "alucinar" valores baseados em conhecimento externo (Ex: Não invente que um PS5 custa 3500 se o usuário não disse o preço).
+    - Se o usuário não mencionar o valor gasto, mas sim apenas um valor de REEMBOLSO (ex: "comprei pão, me devolveram 5 reais"), o campo "valor" deve ser **null**. NÃO use o valor do reembolso como se fosse o valor da compra.
+    
+    Mais Regras:
     - Se a tag não se encaixar perfeitamente ou não for mencionada, retorne null.
     - A descricao deve ser uma versão resumida e clara. Se não houver descrição clara, use null.
     
     Retorne APENAS um JSON:
     {{
-        "valor": float (negativo para gastos, positivo para entradas),
+        "valor": float (negativo para gastos, positivo para entradas ou null),
         "descricao": str (ou null),
         "tags": str (ou null),
         "metodo_pagamento": str (ou null),
@@ -162,7 +169,8 @@ def get_intent_router_prompt(text):
     6. "other": Se não se encaixar em nenhum acima.
 
     REGRAS CRÍTICAS:
-    - Se a frase contiver um VALOR e um ITEM (ex: "picolé 11 reais"), o intent é SEMPRE "insert", mesmo que tenha palavras de tempo como "hoje".
+    - Se a frase contiver um VALOR e um ITEM (ex: "picolé 11 reais"), o intent é "insert".
+    - **PRIORIDADE**: Se a frase contiver palavras como "reembolsou", "reembolso", "estornou" ou "estorno", o intent é SEMPRE "reimburse", mesmo que o usuário mencione que comprou o item (ex: "comprei um jogo e ele foi reembolsado").
     - Se a frase for uma pergunta genérica sobre dinheiro gasto, é "query".
 
     Retorne APENAS um JSON:
